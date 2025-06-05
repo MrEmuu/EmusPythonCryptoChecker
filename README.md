@@ -34,5 +34,5 @@ A Python-based terminal crypto converter with Android (Pydroid3) and Windows sup
 
   * Built for Android (Pydroid3) but also runnable on Windows
   * Windows version may have minor display quirks compared to Pydroid3
-
-Feel free to adjust or expand as needed!
+ 
+ 
