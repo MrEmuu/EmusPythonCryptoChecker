@@ -85,6 +85,14 @@ EMOJI_MAP = {
     'hbar': 'ⓗ', 'hedera': 'ⓗ'
 }
 
+# Supported fiat currency codes (uppercase) for CoinGecko
+SUPPORTED_CURRENCIES = [
+    'AED','ARS','AUD','BDT','BHD','BNB','BRL','BTC','CAD','CHF','CLP','CNY','CZK',
+    'DKK','EUR','GBP','HKD','HUF','IDR','ILS','INR','JPY','KRW','KWD','LKR','MMK',
+    'MXN','MYR','NGN','NOK','NZD','PHP','PKR','PLN','RUB','SAR','SEK','SGD','THB',
+    'TWD','TRY','UAH','USD','VEF','VND','ZAR'
+]
+
 # Popular exchange pairs with typical fees
 EXCHANGE_PAIRS = {
     'xmr_btc':  {'fee_percent': 0.5, 'fee_fixed': 0.0005, 'min_amount': 0.01},
@@ -743,18 +751,26 @@ def main_session():
         # 1) Platform detection
         globals()['platform_type'] = first_run_setup()
 
-        # 2) Prompt for currency once
+        # 2) Prompt for currency once, now with full supported list
         clear_screen()
         print(f"{COLORS['yellow']}┌──────────────────────────────────────────────┐")
         print("│   SELECT YOUR LOCAL CURRENCY (FIRST RUN)   │")
         print(f"└──────────────────────────────────────────────┘{COLORS['reset']}")
-        print("\nEnter your 3-letter currency code (e.g., USD, EUR, GBP).")
-        print("Press Enter to default to USD.\n")
-        currency_input = input(f"{COLORS['blue']}Currency: {COLORS['reset']}").strip()
-        if currency_input == '':
+        print("\nBelow is the list of 3-letter fiat codes supported by CoinGecko.")
+        print("Type one of those codes and press Enter, or press Enter alone to default to USD.\n")
+
+        # Display in rows of 8 codes each
+        per_row = 8
+        for i in range(0, len(SUPPORTED_CURRENCIES), per_row):
+            chunk = SUPPORTED_CURRENCIES[i:i+per_row]
+            print("  " + "   ".join(chunk))
+        print()
+
+        choice = input(f"{COLORS['blue']}Currency: {COLORS['reset']}").strip().upper()
+        if choice == '' or choice not in SUPPORTED_CURRENCIES:
             user_currency = 'usd'
         else:
-            user_currency = currency_input.lower()
+            user_currency = choice.lower()
         globals()['user_currency'] = user_currency
 
         # Mark first run as done
