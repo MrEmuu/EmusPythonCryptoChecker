@@ -6,18 +6,14 @@ from email.message import EmailMessage
 from datetime import datetime
 from typing import Union
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Plotly import
-# ─────────────────────────────────────────────────────────────────────────────
+# Plotly support
 try:
     import plotly.graph_objects as go
     HAS_PLOTLY = True
 except ImportError:
     HAS_PLOTLY = False
 
-# ─────────────────────────────────────────────────────────────────────────────
 # Page config
-# ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Emus Crypto Dashboard", layout="wide")
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -30,9 +26,9 @@ SUPPORTED_CURRENCIES = [
     'TWD','TRY','UAH','USD','VEF','VND','ZAR'
 ]
 EXCHANGE_PAIRS = {
-    "xmr_btc": {"fee_percent":0.5, "fee_fixed":0.0005, "min_amount":0.01},
-    "btc_eth": {"fee_percent":0.3, "fee_fixed":0.0003, "min_amount":0.001},
-    "eth_usdt":{"fee_percent":0.2, "fee_fixed":1.0,   "min_amount":0.1},
+    "xmr_btc": {"fee_percent":0.5,  "fee_fixed":0.0005, "min_amount":0.01},
+    "btc_eth": {"fee_percent":0.3,  "fee_fixed":0.0003, "min_amount":0.001},
+    "eth_usdt":{"fee_percent":0.2,  "fee_fixed":1.0,    "min_amount":0.1},
 }
 TIMEFRAMES = {"24h":"1","7d":"7","1m":"30","3m":"90","1y":"365","max":"max"}
 
@@ -69,30 +65,22 @@ def notify_in_app(symbol, pct):
 def fetch_trending_symbols() -> list[str]:
     try:
         r = requests.get("https://api.coingecko.com/api/v3/search/trending", timeout=5)
-        coins = r.json().get("coins", [])
-        return [c["item"]["symbol"].upper() for c in coins]
+        return [c["item"]["symbol"].upper() for c in r.json().get("coins", [])]
     except:
         return []
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Data fetching (no cache on coins list)
+# Data fetching (no cache on list)
 # ─────────────────────────────────────────────────────────────────────────────
 def get_coins_list(fiat: str) -> pd.DataFrame:
     f = fiat.lower()
-    # Try CoinGecko
+    # 1) CoinGecko
     try:
         r = requests.get(
             "https://api.coingecko.com/api/v3/coins/markets",
-            params={
-                "vs_currency":f,
-                "order":"market_cap_desc",
-                "per_page":100,
-                "page":1,
-                "sparkline":"false"
-            },
+            params={"vs_currency": f, "order": "market_cap_desc", "per_page": 100, "page": 1, "sparkline": "false"},
             timeout=10
-        )
-        r.raise_for_status()
+        ); r.raise_for_status()
         data = r.json()
         return pd.DataFrame([{
             "id":         c["id"],
@@ -105,9 +93,9 @@ def get_coins_list(fiat: str) -> pd.DataFrame:
     except:
         pass
 
-    # Fallback to CoinCap
+    # 2) CoinCap fallback
     try:
-        cc = requests.get("https://api.coincap.io/v2/assets", params={"limit":100}, timeout=10)
+        cc = requests.get("https://api.coincap.io/v2/assets", params={"limit": 100}, timeout=10)
         cc.raise_for_status()
         rate = get_fiat_conversion_rate(fiat)
         arr  = cc.json().get("data", [])
@@ -128,30 +116,27 @@ def get_historical_data(coin_id: str, fiat: str, days: Union[int,str]) -> pd.Dat
     try:
         r = requests.get(
             f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart",
-            params={"vs_currency":f,"days":days},
-            timeout=10
-        )
-        r.raise_for_status()
-        df = pd.DataFrame(r.json().get("prices",[]), columns=["ts","price"])
+            params={"vs_currency": f, "days": days}, timeout=10
+        ); r.raise_for_status()
+        df = pd.DataFrame(r.json().get("prices", []), columns=["ts","price"])
         df["datetime"] = pd.to_datetime(df["ts"], unit="ms")
         return df[["datetime","price"]]
     except:
         return pd.DataFrame()
 
-def get_fiat_conversion_rate(fiat:str) -> float:
+def get_fiat_conversion_rate(fiat: str) -> float:
     try:
-        rates = requests.get(
-            "https://api.coingecko.com/api/v3/exchange_rates", timeout=5
-        ).json().get("rates", {})
+        rates = requests.get("https://api.coingecko.com/api/v3/exchange_rates", timeout=5)\
+                     .json().get("rates", {})
         return float(rates.get(fiat.lower(), {}).get("value", 1.0))
     except:
         return 1.0
 
-def compute_fiat_value(amount:float, price:float) -> float:
+def compute_fiat_value(amount: float, price: float) -> float:
     return amount * price
 
 # ─────────────────────────────────────────────────────────────────────────────
-# THEME & Layout
+# THEME & Layout CSS
 # ─────────────────────────────────────────────────────────────────────────────
 FONT = "@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');"
 dark = st.sidebar.checkbox("Dark Theme", True)
@@ -200,155 +185,189 @@ if auto:
 st.markdown(f"**Last Updated:** {st.session_state.last_refresh:%Y-%m-%d %H:%M:%S}")
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Title
+# Title & Permalink load
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown('<div class="rainbow-text">Emus Crypto Dashboard</div>', unsafe_allow_html=True)
 if not HAS_PLOTLY:
     st.warning("Plotly not installed → candlestick disabled.")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Permalink: load from URL
-# ─────────────────────────────────────────────────────────────────────────────
 qp = st.query_params
-param_fiat  = qp.get("fiat",      ["USD"])[0]
-param_coins = qp.get("coins",     [""])[0]
-param_tf    = qp.get("tf",        ["24h"])[0]
-param_hc    = qp.get("hist_chart",["Line"])[0]
-param_dc    = qp.get("dist_chart",["Scatter"])[0]
+param_fiat  = qp.get("fiat",   ["USD"])[0]
+param_coins = qp.get("coins",  [""])[0]
+param_tf    = qp.get("tf",     ["24h"])[0]
+param_hc    = qp.get("hist_chart", ["Line"])[0]
+param_dc    = qp.get("dist_chart", ["Scatter"])[0]
 
 def main():
     # Sidebar: Fiat
-    default_idx = (
-        SUPPORTED_CURRENCIES.index(param_fiat)
-        if param_fiat in SUPPORTED_CURRENCIES
-        else SUPPORTED_CURRENCIES.index("USD")
-    )
-    fiat = st.sidebar.selectbox(
-        "Fiat Currency",
-        SUPPORTED_CURRENCIES,
-        index=default_idx,
-    )
+    default_idx = SUPPORTED_CURRENCIES.index(param_fiat) if param_fiat in SUPPORTED_CURRENCIES else SUPPORTED_CURRENCIES.index("USD")
+    fiat = st.sidebar.selectbox("Fiat Currency", SUPPORTED_CURRENCIES, index=default_idx)
 
-    # ─── Fetch coins with fallback cache ─────────────────────────────────────
-    df_coins = get_coins_list(fiat)
+    # Track fiat changes
+    prev_fiat = st.session_state.get("last_fiat", None)
+    fiat_changed = (prev_fiat != fiat)
+    st.session_state["last_fiat"] = fiat
+
+    # ─── Fetch coins with spinner & cache fallback ─────────────────────────
+    with st.spinner(f"Loading coin list for {fiat}…"):
+        df_coins = get_coins_list(fiat)
     if not df_coins.empty:
         st.session_state.coins_cache = df_coins.copy()
-        symbols = (
-            df_coins
-            .sort_values("market_cap", ascending=False)
-            ["symbol"]
-            .tolist()
-        )
+    elif "coins_cache" in st.session_state:
+        if fiat_changed:
+            st.warning(f"⚠️ Fetch failed for “{fiat}”, using last known data.")
+        df_coins = st.session_state.coins_cache
     else:
-        if "coins_cache" in st.session_state:
-            st.warning(f"⚠️ Data fetch failed for “{fiat}”, using last known data.")
-            df_coins = st.session_state.coins_cache
-            symbols = (
-                df_coins
-                .sort_values("market_cap", ascending=False)
-                ["symbol"]
-                .tolist()
-            )
+        if fiat_changed:
+            st.warning(f"⚠️ Fetch failed for “{fiat}”. No cache – lists will be empty.")
+        df_coins = pd.DataFrame(columns=["id","symbol","name","price","change_24h","market_cap"])
+
+    symbols = df_coins.sort_values("market_cap", ascending=False)["symbol"].tolist()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Alerts setup
+    # ─────────────────────────────────────────────────────────────────────────
+    if "alerts" not in st.session_state:
+        st.session_state.alerts = []
+
+    with st.sidebar.expander("📣 Alerts"):
+        st.markdown("**Create new alert**")
+        coin = st.selectbox("Coin", symbols, key="al_coin")
+        thresh = st.number_input("Threshold (%)", min_value=0.0, value=1.0, step=0.1, key="al_thresh")
+        direction = st.selectbox("Direction", ["Both","Up","Down"], key="al_dir")
+        methods = st.multiselect("Notify via", ["In-app","Email","Discord"], default=["In-app"], key="al_methods")
+
+        # Email inputs
+        if "Email" in methods:
+            smtp_srv = st.text_input("SMTP Server", key="al_smtp_srv")
+            smtp_prt = st.number_input("SMTP Port", min_value=0, value=465, key="al_smtp_prt")
+            smtp_usr = st.text_input("SMTP User", key="al_smtp_usr")
+            smtp_pwd = st.text_input("SMTP Password", type="password", key="al_smtp_pwd")
+            email_to = st.text_input("Recipient Email", key="al_email_to")
         else:
-            st.error(f"⛔ Both CoinGecko and CoinCap failed for “{fiat}”, and no cache available.")
-            return
+            smtp_srv = smtp_prt = smtp_usr = smtp_pwd = email_to = None
 
-    # ─── Quick Watchlists ────────────────────────────────────────────────────
-    def _clear_sel():
-        st.session_state.pop("selected_coins", None)
+        # Discord webhook
+        webhook = st.text_input("Discord Webhook URL", key="al_webhook") if "Discord" in methods else None
 
+        if st.button("➕ Add Alert", key="al_add"):
+            baseline = float(df_coins.loc[df_coins["symbol"]==coin, "price"].iloc[0])
+            st.session_state.alerts.append({
+                "coin":      coin,
+                "threshold": thresh,
+                "direction": direction,
+                "methods":   methods,
+                "smtp":      (smtp_srv, smtp_prt, smtp_usr, smtp_pwd, email_to),
+                "webhook":   webhook,
+                "baseline":  baseline,
+                "fired":     False
+            })
+            st.success(f"Alert for {coin} @ {thresh}% [{direction}] added")
+
+        # List & remove
+        for i, a in enumerate(st.session_state.alerts):
+            st.write(f"• {a['coin']} {a['direction']} {a['threshold']}% → {', '.join(a['methods'])}")
+            if st.button("Remove", key=f"al_rem_{i}"):
+                st.session_state.alerts.pop(i)
+                st.experimental_rerun()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Check & fire alerts
+    # ─────────────────────────────────────────────────────────────────────────
+    for a in st.session_state.alerts:
+        if a["fired"]: continue
+        cur_price = float(df_coins.loc[df_coins["symbol"]==a["coin"], "price"].iloc[0])
+        change_pct = (cur_price - a["baseline"]) / a["baseline"] * 100
+        triggered = (
+            (a["direction"]=="Both" and abs(change_pct)>=a["threshold"]) or
+            (a["direction"]=="Up"   and change_pct>=a["threshold"]) or
+            (a["direction"]=="Down" and change_pct<=-a["threshold"])
+        )
+        if triggered:
+            if "In-app" in a["methods"]:
+                notify_in_app(a["coin"], change_pct)
+            if "Email" in a["methods"]:
+                srv,prt,usr,pwd,to = a["smtp"]
+                subj = f"Crypto Alert: {a['coin']} moved {change_pct:+.2f}%"
+                body = f"{a['coin']} was {a['baseline']:.4f}, now {cur_price:.4f} ({change_pct:+.2f}%)"
+                send_email(srv,prt,usr,pwd,to,subj,body)
+            if "Discord" in a["methods"] and a["webhook"]:
+                msg = f"🚨 {a['coin']} moved {change_pct:+.2f}% (from {a['baseline']:.4f} to {cur_price:.4f})"
+                send_discord(a["webhook"], msg)
+            a["fired"] = True
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Quick watchlists & coin selector
+    # ─────────────────────────────────────────────────────────────────────────
+    def _clear_sel(): st.session_state.pop("selected_coins", None)
     PRESETS = {
-        "Custom":   [],
-        "Top 10":   symbols[:10],
+        "Custom":   [], "Top 10": symbols[:10],
         "Trending": fetch_trending_symbols(),
         "Gainers":  df_coins.nlargest(5, "change_24h")["symbol"].tolist(),
         "Losers":   df_coins.nsmallest(5, "change_24h")["symbol"].tolist(),
         "DeFi":     ["UNI","AAVE","COMP","SUSHI","YFI"],
         "Privacy":  ["XMR","ZEC","DASH"],
     }
-
-    st.sidebar.radio(
-        "Watchlist",
-        options=list(PRESETS.keys()),
-        key="watchlist",
-        on_change=_clear_sel
-    )
+    st.sidebar.radio("Watchlist", list(PRESETS.keys()), key="watchlist", on_change=_clear_sel)
     watch = st.session_state.watchlist
-
     url_coins = param_coins.split(",") if param_coins else []
-    if watch != "Custom":
-        defaults = [c for c in PRESETS[watch] if c in symbols]
-    else:
-        defaults = url_coins
-
+    defaults = ([c for c in PRESETS[watch] if c in symbols] if watch!="Custom" else url_coins)
     if st.sidebar.button("🔄 Reset Coins"):
         st.session_state.pop("selected_coins", None)
         defaults = []
         st.rerun()
+    sel = st.sidebar.multiselect("Select Coins", options=symbols, default=defaults, key="selected_coins")
 
-    sel = st.sidebar.multiselect(
-        "Select Coins",
-        options=symbols,
-        default=defaults,
-        key="selected_coins"
-    )
-
-    # Sidebar: timeframe & chart types
+    # ─────────────────────────────────────────────────────────────────────────
+    # Timeframe & chart selectors
+    # ─────────────────────────────────────────────────────────────────────────
     tf_list   = list(TIMEFRAMES.keys())
-    timeframe = st.sidebar.selectbox(
-        "Timeframe", tf_list,
-        index=tf_list.index(param_tf) if param_tf in tf_list else 0
-    )
-    chart_h = st.sidebar.selectbox(
-        "Historical Chart Type", ["Line","Candlestick"],
-        index=["Line","Candlestick"].index(param_hc) if param_hc in ["Line","Candlestick"] else 0
-    )
-    dist_chart = st.sidebar.selectbox(
-        "Distribution Chart Type", ["Scatter","Candlestick"],
-        index=["Scatter","Candlestick"].index(param_dc) if param_dc in ["Scatter","Candlestick"] else 0,
-        key="dist_chart"
-    )
+    timeframe = st.sidebar.selectbox("Timeframe", tf_list, index=tf_list.index(param_tf) if param_tf in tf_list else 0)
+    chart_h   = st.sidebar.selectbox("Historical Chart Type", ["Line","Candlestick"],
+                  index=["Line","Candlestick"].index(param_hc) if param_hc in ["Line","Candlestick"] else 0)
+    dist_chart= st.sidebar.selectbox("Distribution Chart Type", ["Scatter","Candlestick"],
+                  index=["Scatter","Candlestick"].index(param_dc) if param_dc in ["Scatter","Candlestick"] else 0, key="dist_chart")
 
-    # ─── Tabs ──────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tabs: Overview, Historical, Distribution, Fees
+    # ─────────────────────────────────────────────────────────────────────────
     tab1, tab2, tab3, tab4 = st.tabs(["Overview","Historical","Distribution","Fees"])
 
-    # Overview Tab
+    # Overview
     with tab1:
         st.markdown('<h2 class="rainbow-text-sm">Overview</h2>', unsafe_allow_html=True)
         if sel:
-            ov = df_coins[df_coins["symbol"].isin(sel)] \
-                .set_index("symbol")[["name","price","change_24h"]]
+            ov = df_coins[df_coins["symbol"].isin(sel)].set_index("symbol")[["name","price","change_24h"]]
             ov["price"]      = ov["price"].map(lambda x: f"{x:,.2f}")
             ov["change_24h"] = ov["change_24h"].map(lambda v: f"{'▲' if v>=0 else '▼'} {abs(v):.2f}%")
             ov.columns = ["Name","Price","24h Change"]
             st.dataframe(ov)
-            st.download_button("Download Overview CSV", ov.to_csv().encode(),
-                               "overview.csv","text/csv")
+            st.download_button("Download Overview CSV", ov.to_csv().encode(), "overview.csv","text/csv")
         else:
             st.info("Select coins.")
 
-    # Historical Tab
+    # Historical
     with tab2:
         st.markdown('<h2 class="rainbow-text-sm">Historical Price Trends</h2>', unsafe_allow_html=True)
         merged = None
-        for sym in sel:
-            cid = df_coins.loc[df_coins["symbol"]==sym, "id"].iloc[0]
-            dfh = get_historical_data(cid, fiat, TIMEFRAMES[timeframe])
-            if not dfh.empty:
-                s = dfh.set_index("datetime")["price"].rename(sym)
-                merged = s.to_frame() if merged is None else merged.join(s, how="outer")
+        with st.spinner("Fetching historical data…"):
+            for sym in sel:
+                cid = df_coins.loc[df_coins["symbol"]==sym, "id"].iloc[0]
+                dfh = get_historical_data(cid, fiat, TIMEFRAMES[timeframe])
+                if not dfh.empty:
+                    s = dfh.set_index("datetime")["price"].rename(sym)
+                    merged = s.to_frame() if merged is None else merged.join(s, how="outer")
         if merged is not None and not merged.empty and HAS_PLOTLY:
             fig = go.Figure()
             if chart_h == "Line":
                 for c in merged.columns:
                     fig.add_trace(go.Scatter(x=merged.index, y=merged[c], mode="lines", name=c))
             else:
-                o = merged[[sel[0]]].dropna().resample("1h") \
-                      .agg({sel[0]:["first","max","min","last"]})
+                o = merged[[sel[0]]].dropna().resample("1h")\
+                    .agg({sel[0]:["first","max","min","last"]})
                 o.columns = ["open","high","low","close"]
                 fig = go.Figure(data=[go.Candlestick(
-                    x=o.index, open=o["open"], high=o["high"],
-                    low=o["low"], close=o["close"]
+                    x=o.index, open=o["open"], high=o["high"], low=o["low"], close=o["close"]
                 )])
             st.plotly_chart(fig, use_container_width=True)
             img = fig.to_image(format="png")
@@ -356,42 +375,40 @@ def main():
         else:
             st.info("No data or Plotly missing.")
 
-    # Distribution Tab
+    # Distribution
     with tab3:
         st.markdown('<h2 class="rainbow-text-sm">Price Change Distribution (24h)</h2>', unsafe_allow_html=True)
         ddf = df_coins[df_coins["symbol"].isin(sel)]
         if not ddf.empty and HAS_PLOTLY:
+            fig = None
             if dist_chart == "Scatter":
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(x=ddf["change_24h"], y=ddf["symbol"],
-                                         mode="markers", marker=dict(size=12)))
+                fig.add_trace(go.Scatter(x=ddf["change_24h"], y=ddf["symbol"], mode="markers", marker=dict(size=12)))
+            else:
+                with st.spinner("Loading 24h candlestick data…"):
+                    dfh = get_historical_data(df_coins.loc[df_coins["symbol"]==sel[0],"id"].iloc[0], fiat, TIMEFRAMES["24h"])
+                if not dfh.empty and "datetime" in dfh.columns:
+                    o = dfh.set_index("datetime").resample("1h")\
+                        .agg({"price":["first","max","min","last"]})
+                    o.columns = ["open","high","low","close"]
+                    fig = go.Figure(data=[go.Candlestick(
+                        x=o.index, open=o["open"], high=o["high"], low=o["low"], close=o["close"]
+                    )])
+                else:
+                    st.warning("No 24h data for candlestick.")
+            if fig:
                 st.plotly_chart(fig, use_container_width=True)
                 img = fig.to_image(format="png")
                 st.download_button("Download Distribution PNG", img, "distribution.png","image/png")
-            else:
-                dfh = get_historical_data(df_coins.loc[df_coins["symbol"]==sel[0],"id"].iloc[0], fiat, TIMEFRAMES["24h"])
-                if not dfh.empty and "datetime" in dfh.columns:
-                    o = dfh.set_index("datetime").resample("1h") \
-                          .agg({"price":["first","max","min","last"]})
-                    o.columns = ["open","high","low","close"]
-                    fig = go.Figure(data=[go.Candlestick(
-                        x=o.index, open=o["open"], high=o["high"],
-                        low=o["low"], close=o["close"]
-                    )])
-                    st.plotly_chart(fig, use_container_width=True)
-                    img = fig.to_image(format="png")
-                    st.download_button("Download Distribution PNG", img, "distribution.png","image/png")
-                else:
-                    st.warning("No 24h data for candlestick.")
         else:
             st.info("Select coins or install Plotly.")
 
-    # Fees Tab
+    # Fees
     with tab4:
         st.markdown('<h2 class="rainbow-text-sm">Network / Exchange Fees</h2>', unsafe_allow_html=True)
         fees = []
         for p,i in EXCHANGE_PAIRS.items():
-            b,q = p.split("_"); B,Q = b.upper(), q.upper()
+            b,q = p.split("_"); B,Q = b.upper(),q.upper()
             if B in sel or Q in sel:
                 pr = float(df_coins.loc[df_coins["symbol"]==B,"price"].iloc[0])
                 fees.append({
@@ -409,9 +426,7 @@ def main():
         else:
             st.info("No exchange pairs.")
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Permalink: write back to URL
-    # ─────────────────────────────────────────────────────────────────────────
+    # Permalink write-back
     st.query_params = {
         "fiat":       [fiat],
         "coins":      [",".join(sel)],
