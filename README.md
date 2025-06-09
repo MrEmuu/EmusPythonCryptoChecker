@@ -1,95 +1,21 @@
 
 ## Description
 
-**Emus Crypto Dashboard** is a feature-rich, synthwave‐themed web application built with Streamlit, designed to provide real‐time and historical analytics for the top cryptocurrencies. Originally based on a terminal‐driven Python script, this modern dashboard consolidates price data, historical trends, exchange/network fee comparisons, and interactive visualizations—all within a dark, cyberpunk‐inspired interface. Users can select multiple coins, view automated up/down indicators for price changes and fees, and toggle between bar, line, and candlestick charts. The app also supports a fallback mechanism (CoinCap) if CoinGecko is unreachable, and it caches data to minimize redundant API calls.
+**Emus Crypto Dashboard** is a cross-platform (Windows & Android via Pydroid3) Streamlit app built for real-time crypto analytics:
 
-Whether you’re an active trader, a data scientist, or simply a crypto enthusiast, Emus Crypto Dashboard offers an at‐a‐glance view of market movements, plus plenty of tools to drill deeper into specific coins’ performance over various timeframes.
+* **Live market data** from CoinGecko with CoinCap fallback
+* **Fiat currency selector** (all major 3-letter codes)
+* **Quick watchlists** (Top 10 by market cap, Trending, Gainers/Losers, DeFi, Privacy) + fully **customizable** coin lists
+* **Historical price trends** (line & candlestick) over 24 h, 7 d, 1 m, 3 m, 1 y, and max
+* **Price Change Distribution** scatter or candlestick view 📊
+* **Network/Exchange fees** table with fiat conversion
+* **Permalinks** via URL query params for instant share-ability
+* **Dark & light themes**, retro “Press Start 2P” font, synthwave rainbow header animations
+* **CSV & PNG export** on every table/chart
+* **Robust error handling** & fallback caching so you never lose access if an API goes down
 
----
+Perfect for traders or data scientists who need a fast, shareable, and visually striking crypto dashboard.
 
-## Planned / Optional Features to Add
-
-Below is a non‐exhaustive list of potential enhancements you might consider adding in future iterations:
-
-1. **User Authentication & Personal Watchlists**
-
-   * Allow users to log in (e.g. via OAuth) and save personalized coin watchlists so that selections persist across sessions.
-   * Enable push notifications or email alerts when a coin’s price crosses a certain threshold.
-
-2. **Advanced Charting & Drawing Tools**
-
-   * Integrate more advanced Plotly features: zoom/pan presets, RSI/MACD overlays, Bollinger Bands, volume bars.
-   * Offer on‐chart drawing tools (trendlines, Fibonacci retracements) for technical analysis.
-
-3. **Portfolio Tracking & Profit/Loss Calculator**
-
-   * Let users input their holdings (amount of each coin and purchase price) to see real‐time portfolio value and P\&L.
-   * Provide a “Tax Summary” section that calculates realized/unrealized gains in fiat.
-
-4. **Deeper Fund Flow / On‐Chain Metrics**
-
-   * Pull in on‐chain metrics (e.g. network transaction volume, active addresses, hash rate).
-   * Display fund flow heatmaps for major exchanges (inflows vs. outflows) to gauge market sentiment.
-
-5. **Multiple Fiat/Stablecoin Support**
-
-   * Expand beyond static fiat conversion: allow quoting in stablecoins (USDT, USDC, BUSD) or other fiat pairs (e.g., EUR‐BTC, JPY‐ETH).
-   * Show a small sparkline of FX rate changes alongside coin prices (e.g., EUR→USD, JPY→USD).
-
-6. **News & Sentiment Integration**
-
-   * Embed a news RSS/JSON feed widget for each selected coin (e.g., CoinTelegraph, CryptoPanic).
-   * Overlay sentiment analysis (positive/negative) from Twitter or Reddit posts alongside price charts.
-
-7. **Comparison Mode & Correlation Matrix**
-
-   * Allow side‐by‐side comparisons of two or more coins on the same axes (axis scaling options, normalization).
-   * Compute and display a coin‐correlation matrix (heatmap) over the chosen timeframe (7d, 30d, 90d).
-
-8. **Order Book Snapshot & Live Ticker**
-
-   * Fetch and display a top‐10 order book snapshot for a selected coin/pair (via exchange REST WebSocket).
-   * Show a live ticker of trades (in the sidebar or a marquee at the top) for real‐time feel.
-
-9. **Dark‐Light Mode Toggle**
-
-   * Offer a “Light Mode” CSS theme switch for users who prefer higher‐contrast or paper‐white backgrounds.
-   * Store preference in `st.session_state` or user settings so that UI text and chart backgrounds switch accordingly.
-
-10. **Export & Download Options**
-
-    * Let users export historical data (CSV/Excel) for selected coins/timeframes.
-    * Provide a “Download Chart as PNG” button on each Plotly figure.
-
-11. **Mobile‐Friendly Layout Tweaks**
-
-    * Create a responsive layout using `st.beta_columns` or container widths so components stack gracefully on narrow screens.
-    * Offer a simplified “Lite Mode” that hides heavier charts for slower mobile connections (Android).
-
-12. **Multi‐Exchange Price Aggregation**
-
-    * Query additional APIs (e.g., Binance, Kraken, Coinbase) and display an aggregated “best bid/ask” or volume‐weighted average price (VWAP).
-    * Show the price spread across different exchanges in a small table.
-
-13. **Historical Volatility & Metrics Dashboard**
-
-    * Compute and visualize realized/perceived volatility (e.g., 30d rolling volatility).
-    * Add metrics like Sharpe ratio, Sortino ratio, and drawdown curves for each coin over chosen timeframes.
-
-14. **Custom Alerts & Triggers**
-
-    * Allow users to set alerts for when a coin’s price moves by a certain % in an hour/day.
-    * Use a back‐end scheduler (e.g., PingStreamlit or a lightweight Celery worker) to check and trigger notifications.
-
-15. **Localization & Internationalization**
-
-    * Translate UI text into multiple languages (Spanish, Chinese, Russian, etc.).
-    * Detect the browser’s locale and auto‐select the appropriate fiat (EUR, GBP, CNY).
-
-16. **Plugin System for Community‐Contributed Widgets**
-
-    * Architect a simple plugin API so advanced users can drop in additional charts or data sources (e.g., DeFi TVL, NFT floor prices).
-    * Provide a “Plugins” folder where each `.py` plugin can register itself with the main dashboard.
 
 ---
 
