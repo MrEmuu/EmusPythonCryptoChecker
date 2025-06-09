@@ -80,7 +80,8 @@ def get_coins_list(fiat: str) -> pd.DataFrame:
             "https://api.coingecko.com/api/v3/coins/markets",
             params={"vs_currency": f, "order": "market_cap_desc", "per_page": 100, "page": 1, "sparkline": "false"},
             timeout=10
-        ); r.raise_for_status()
+        )
+        r.raise_for_status()
         data = r.json()
         return pd.DataFrame([{
             "id":         c["id"],
@@ -117,7 +118,8 @@ def get_historical_data(coin_id: str, fiat: str, days: Union[int,str]) -> pd.Dat
         r = requests.get(
             f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart",
             params={"vs_currency": f, "days": days}, timeout=10
-        ); r.raise_for_status()
+        )
+        r.raise_for_status()
         df = pd.DataFrame(r.json().get("prices", []), columns=["ts","price"])
         df["datetime"] = pd.to_datetime(df["ts"], unit="ms")
         return df[["datetime","price"]]
@@ -225,6 +227,19 @@ def main():
     symbols = df_coins.sort_values("market_cap", ascending=False)["symbol"].tolist()
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Real-time Price Ticker
+    # ─────────────────────────────────────────────────────────────────────────
+    ticker_interval = st.sidebar.number_input(
+        "Ticker interval (s)", min_value=1, max_value=60, value=10, step=1, key="ticker_interval"
+    )
+    now2 = datetime.now()
+    if "last_ticker" not in st.session_state:
+        st.session_state.last_ticker = now2
+    if (now2 - st.session_state.last_ticker).total_seconds() >= ticker_interval:
+        st.session_state.last_ticker = now2
+        st.rerun()
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Alerts setup
     # ─────────────────────────────────────────────────────────────────────────
     if "alerts" not in st.session_state:
@@ -237,7 +252,6 @@ def main():
         direction = st.selectbox("Direction", ["Both","Up","Down"], key="al_dir")
         methods = st.multiselect("Notify via", ["In-app","Email","Discord"], default=["In-app"], key="al_methods")
 
-        # Email inputs
         if "Email" in methods:
             smtp_srv = st.text_input("SMTP Server", key="al_smtp_srv")
             smtp_prt = st.number_input("SMTP Port", min_value=0, value=465, key="al_smtp_prt")
@@ -247,7 +261,6 @@ def main():
         else:
             smtp_srv = smtp_prt = smtp_usr = smtp_pwd = email_to = None
 
-        # Discord webhook
         webhook = st.text_input("Discord Webhook URL", key="al_webhook") if "Discord" in methods else None
 
         if st.button("➕ Add Alert", key="al_add"):
@@ -264,18 +277,18 @@ def main():
             })
             st.success(f"Alert for {coin} @ {thresh}% [{direction}] added")
 
-        # List & remove
         for i, a in enumerate(st.session_state.alerts):
             st.write(f"• {a['coin']} {a['direction']} {a['threshold']}% → {', '.join(a['methods'])}")
             if st.button("Remove", key=f"al_rem_{i}"):
                 st.session_state.alerts.pop(i)
-                st.experimental_rerun()
+                st.rerun()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Check & fire alerts
     # ─────────────────────────────────────────────────────────────────────────
     for a in st.session_state.alerts:
-        if a["fired"]: continue
+        if a["fired"]:
+            continue
         cur_price = float(df_coins.loc[df_coins["symbol"]==a["coin"], "price"].iloc[0])
         change_pct = (cur_price - a["baseline"]) / a["baseline"] * 100
         triggered = (
@@ -299,7 +312,8 @@ def main():
     # ─────────────────────────────────────────────────────────────────────────
     # Quick watchlists & coin selector
     # ─────────────────────────────────────────────────────────────────────────
-    def _clear_sel(): st.session_state.pop("selected_coins", None)
+    def _clear_sel():
+        st.session_state.pop("selected_coins", None)
     PRESETS = {
         "Custom":   [], "Top 10": symbols[:10],
         "Trending": fetch_trending_symbols(),
@@ -314,9 +328,18 @@ def main():
     defaults = ([c for c in PRESETS[watch] if c in symbols] if watch!="Custom" else url_coins)
     if st.sidebar.button("🔄 Reset Coins"):
         st.session_state.pop("selected_coins", None)
-        defaults = []
         st.rerun()
     sel = st.sidebar.multiselect("Select Coins", options=symbols, default=defaults, key="selected_coins")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Render ticker bar
+    # ─────────────────────────────────────────────────────────────────────────
+    if sel:
+        ticker_bar = st.empty()
+        cols = ticker_bar.columns(len(sel))
+        for col, sym in zip(cols, sel):
+            price = float(df_coins.loc[df_coins["symbol"]==sym, "price"].iloc[0])
+            col.metric(label=sym, value=f"{price:,.2f} {fiat}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Timeframe & chart selectors
