@@ -10,6 +10,8 @@ import hashlib
 import time
 import firebase_admin
 from firebase_admin import credentials, firestore
+import math
+import random
 
 # Plotly support
 try:
@@ -34,21 +36,18 @@ def initialize_firebase():
         if not firebase_admin._apps:
             firebase_admin.initialize_app(credentials.Certificate(cred_dict))
     except Exception as e:
-        st.error(f"Firebase initialization failed: {e}. Ensure secrets.toml is configured.")
+        st.error(f"Firebase initialization failed: {e}. Ensure secrets are set.")
         st.stop()
 
 initialize_firebase()
 db = firestore.client()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Constants
+# Constants & Helper Functions
 # ─────────────────────────────────────────────────────────────────────────────
 SUPPORTED_CURRENCIES = ['USD', 'EUR', 'JPY', 'GBP', 'AUD', 'CAD', 'CHF', 'CNY', 'INR', 'BRL', 'RUB', 'KRW', 'SGD', 'MXN', 'NZD', 'HKD', 'NOK', 'SEK', 'ZAR', 'TRY']
 TIMEFRAMES = {"24h": "1", "7d": "7", "1m": "30", "3m": "90", "1y": "365", "max": "max"}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Helper & Utility Functions
-# ─────────────────────────────────────────────────────────────────────────────
 def to_float(value) -> float:
     if value is None: return 0.0
     try: return float(value)
@@ -56,6 +55,33 @@ def to_float(value) -> float:
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gamification System
+# ─────────────────────────────────────────────────────────────────────────────
+def get_xp_for_level(level: int) -> int:
+    return math.floor(100 * (level ** 1.5))
+
+def grant_xp(username: str, amount: int):
+    user_ref = db.collection('users').document(username)
+    user_data = user_ref.get().to_dict()
+    if not user_data: return
+    
+    current_xp = user_data.get('xp', 0)
+    current_level = user_data.get('level', 1)
+    new_xp = current_xp + amount
+    xp_for_next_level = get_xp_for_level(current_level)
+    
+    leveled_up = False
+    while new_xp >= xp_for_next_level:
+        new_xp -= xp_for_next_level
+        current_level += 1
+        xp_for_next_level = get_xp_for_level(current_level)
+        leveled_up = True
+    
+    save_user_data(username, {'xp': new_xp, 'level': current_level})
+    if leveled_up:
+        st.session_state.leveled_up_message = f"Congratulations! You've reached Level {current_level}!"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Data Fetching & User/Portfolio Management (Firestore)
@@ -137,6 +163,17 @@ def check_password(username, password) -> bool:
     if user_data and user_data.get('hashed_password') == hashed_password: return True
     return False
 
+@st.cache_data(ttl=3600)
+def get_custom_emotes() -> dict:
+    emotes_ref = db.collection('emotes').stream()
+    return {f":{doc.id}:": doc.to_dict()['url'] for doc in emotes_ref}
+
+def parse_emotes(message: str) -> str:
+    custom_emotes = get_custom_emotes()
+    for emote_name, url in custom_emotes.items():
+        message = message.replace(emote_name, f'<img src="{url}" width="24" style="vertical-align:middle; margin: 0 2px;">')
+    return message
+    
 # ─────────────────────────────────────────────────────────────────────────────
 # THEME & Layout CSS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -146,34 +183,39 @@ def apply_theme():
     dark_theme = {"bg": "#0a0a20", "text": "#fff", "table_bg": "#12122e", "header_bg": "#1f1f4d", "header_text": "#0ff"}
     light_theme = {"bg": "#FFFFFF", "text": "#31333F", "table_bg": "#f0f2f6", "header_bg": "#e0e0e0", "header_text": "#31333F"}
     theme = dark_theme if dark else light_theme
+    
+    # FIX: Consolidated all CSS into a single, clean block
     css = f"""
-        <style>
-            {FONT}
-            body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }}
-            .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }}
-            .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }}
-            .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }}
-            .rainbow-text-sm {{ font-size: 1.75rem; }}
-            #MainMenu, footer {{ visibility: hidden; }}
-            .pfp-sidebar {{ border-radius: 50%; object-fit: cover; width: 35px; height: 35px; vertical-align: middle; margin-left: 10px; }}
-            .online-indicator {{ height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: middle; }}
-            .online {{ background-color: #2de040; }} .offline {{ background-color: #888; }}
-            .chat-bubble {{ padding: 10px 15px; border-radius: 20px; margin-bottom: 5px; display: inline-block; max-width: 100%; word-wrap: break-word; }}
-            .chat-bubble.user {{ background: linear-gradient(90deg, #6a11cb 0%, #2575fc 100%); color: white; border-bottom-right-radius: 5px; }}
-            .chat-bubble.other {{ background: #333; color: white; border-bottom-left-radius: 5px; }}
-            .chat-row {{ display: flex; margin-bottom: 10px; align-items: flex-end;}}
-            .chat-row.user {{ justify-content: flex-end; }}
-            .chat-pfp {{ width: 40px; height: 40px; border-radius: 50%; object-fit: cover; align-self: flex-start; }}
-            .chat-row.user .chat-pfp {{ margin-left: 10px; }}
-            .chat-row.other .chat-pfp {{ margin-right: 10px; }}
-            .chat-content {{ max-width: 80%; }}
-        </style>
+        {FONT}
+        body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }}
+        .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }}
+        .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }}
+        .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }}
+        .rainbow-text-sm {{ font-size: 1.75rem; }}
+        #MainMenu, footer {{ visibility: hidden; }}
+        .pfp-sidebar {{ border-radius: 50%; object-fit: cover; width: 35px; height: 35px; vertical-align: middle; margin-left: 10px; }}
+        .online-indicator {{ height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: middle; }}
+        .online {{ background-color: #2de040; }} .offline {{ background-color: #888; }}
+        .chat-bubble {{ padding: 10px 15px; border-radius: 20px; margin-bottom: 5px; display: inline-block; max-width: 100%; word-wrap: break-word; }}
+        .chat-bubble.user {{ background: linear-gradient(90deg, #6a11cb 0%, #2575fc 100%); color: white; border-bottom-right-radius: 5px; }}
+        .chat-bubble.other {{ background: #333; color: white; border-bottom-left-radius: 5px; }}
+        .chat-row {{ display: flex; margin-bottom: 10px; align-items: flex-end; }}
+        .chat-row.user {{ justify-content: flex-end; }}
+        .chat-pfp {{ width: 40px; height: 40px; border-radius: 50%; object-fit: cover; align-self: flex-start; }}
+        .chat-row.user .chat-pfp {{ margin-left: 10px; }}
+        .chat-row.other .chat-pfp {{ margin-right: 10px; }}
+        .chat-content {{ max-width: 80%; }}
     """
+    
     gradient_animation = "background-size: 200% 200%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: rainbow-flow 12s ease infinite;"
     keyframes = "@keyframes rainbow-flow { 0%{{background-position:0% 50%}} 50%{{background-position:100% 50%} 100%{{background-position:0% 50%} }"
-    if dark: css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, #ff0080, #ff4500, #ff8c00, #ffff00); {gradient_animation} }} {keyframes}"
-    else: css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, cyan, magenta, cyan); {gradient_animation} }} {keyframes}"
-    st.markdown(css, unsafe_allow_html=True)
+    
+    if dark:
+        css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, #ff0080, #ff4500, #ff8c00, #ffff00); {gradient_animation} }} {keyframes}"
+    else:
+        css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, cyan, magenta, cyan); {gradient_animation} }} {keyframes}"
+
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -218,7 +260,7 @@ def render_overview_tab(coins_df: pd.DataFrame, fiat: str):
     st.dataframe(overview_df)
 
 def render_portfolio_tab(coins_df, fiat, username):
-    st.markdown('<h2 class="rainbow-text-sm">Portfolio Tracker</h2>', unsafe_allow_html=True)
+    st.markdown('<h2 class="rainbow-text-sm">Real Portfolio Tracker</h2>', unsafe_allow_html=True)
     if 'holdings' not in st.session_state:
         st.session_state.holdings = calculate_holdings(load_portfolio_transactions(username))
 
@@ -314,48 +356,38 @@ def render_historical_tab(coins_df, selected_symbols, fiat, timeframe, chart_typ
 
 def render_community_tab(current_user, coins_df, fiat):
     st.markdown('<h2 class="rainbow-text-sm">Community Hub</h2>', unsafe_allow_html=True)
-    auto_refresh_chat = st.toggle("Auto-refresh chat", value=True, help="Automatically fetch new messages every 15 seconds.")
     
-    tab1, tab2, tab3 = st.tabs(["💬 Chat Room", "👥 Users", "🤝 Friends"])
+    col1, col2 = st.columns([3,1])
+    with col1:
+        auto_refresh_chat = st.toggle("Auto-refresh chat", value=True, help="Automatically fetch new messages every 15 seconds.")
+    with col2:
+        if st.button("Refresh Now"):
+            st.rerun()
+    
+    if auto_refresh_chat and st.session_state.get('current_tab') == '🌐 Community':
+        st.components.v1.html("<meta http-equiv='refresh' content='15'>", height=0)
+
+    tab1, tab2, tab3, tab4 = st.tabs(["💬 Chat Room", "👥 Users", "🤝 Friends", "🎨 Custom Emotes"])
 
     with tab1:
-        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-        chat_ref = db.collection('chat').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(50)
-        chat_docs = list(chat_ref.stream())
-        for msg_doc in reversed(chat_docs):
-            msg = msg_doc.to_dict()
-            is_user = msg.get('username') == current_user
-            user_data = load_user_data(msg.get('username','?'))
-            pfp = user_data.get('pfp_url', 'https://placehold.co/40x40/222/fff?text=??')
-            
-            row_class = "user" if is_user else "other"
-            bubble_class = "user" if is_user else "other"
-            
-            if is_user:
-                st.markdown(f"""
-                    <div class="chat-row {row_class}">
-                        <div class="chat-content">
-                            <div class="chat-bubble {bubble_class}">{msg['message']}</div>
-                            <div style="text-align: right; font-size: 0.7rem; color: #888;">{msg['timestamp'].strftime('%H:%M')}</div>
-                        </div>
-                        <img src="{pfp}" class="chat-pfp" onerror="this.src='https://placehold.co/40x40/222/fff?text=??';">
-                    </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.markdown(f"""
-                    <div class="chat-row {row_class}">
-                        <img src="{pfp}" class="chat-pfp" onerror="this.src='https://placehold.co/40x40/222/fff?text=??';">
-                        <div class="chat-content">
-                            <b>{msg.get('username','?')}</b>
-                            <div class="chat-bubble {bubble_class}">{msg['message']}</div>
-                            <div style="text-align: left; font-size: 0.7rem; color: #888;">{msg['timestamp'].strftime('%H:%M')}</div>
-                        </div>
-                    </div>
-                """, unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
+        st.subheader("Live Chat")
+        chat_container = st.container()
+        with chat_container:
+            chat_ref = db.collection('chat').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(50)
+            chat_docs = list(chat_ref.stream())
+            for msg_doc in reversed(chat_docs):
+                msg = msg_doc.to_dict()
+                user_data = load_user_data(msg.get('username','?'))
+                pfp = user_data.get('pfp_url', 'https://placehold.co/40x40/222/fff?text=??')
+                
+                with st.chat_message(name=" ", avatar=pfp):
+                    st.markdown(f"**{msg.get('username','?')}**")
+                    st.markdown(f"<div style='margin-top: -10px;'>{parse_emotes(msg['message'])}</div>", unsafe_allow_html=True)
+                    st.caption(f"_{msg['timestamp'].strftime('%H:%M')}_")
+        
         if prompt := st.chat_input("Say something..."):
             db.collection('chat').add({'username': current_user, 'message': prompt, 'timestamp': datetime.now(timezone.utc)})
+            grant_xp(current_user, 2)
             st.rerun()
 
     with tab2:
@@ -367,8 +399,7 @@ def render_community_tab(current_user, coins_df, fiat):
             last_seen = data.get('last_seen')
             if isinstance(last_seen, datetime):
                  is_online = (datetime.now(timezone.utc) - last_seen).total_seconds() < 300
-            else:
-                 is_online = False
+            else: is_online = False
             status_class = "online" if is_online else "offline"
             st.markdown(f'<div><span class="online-indicator {status_class}"></span> {username}</div>', unsafe_allow_html=True)
 
@@ -380,6 +411,7 @@ def render_community_tab(current_user, coins_df, fiat):
             if selected_user != current_user:
                 if st.button(f"➕ Add {selected_user} as a Friend"):
                     db.collection('users').document(selected_user).collection('friend_requests').document(current_user).set({'from': current_user, 'timestamp': datetime.now(timezone.utc)})
+                    grant_xp(current_user, 10)
                     st.success(f"Friend request sent to {selected_user}!")
                 if st.button(f"Compare Portfolios with {selected_user}"):
                     st.session_state.compare_user = selected_user
@@ -394,10 +426,8 @@ def render_community_tab(current_user, coins_df, fiat):
                 if not merged.empty:
                     st.markdown("---"); st.subheader("Side-by-Side Value")
                     st.dataframe(merged[['Symbol', f'Value ({fiat})_{current_user}', f'Value ({fiat})_{compare_with}']].set_index('Symbol'))
-                else:
-                    st.info("You and this user do not hold any of the same assets to compare.")
+                else: st.info("You and this user do not hold any of the same assets to compare.")
 
-            
     with tab3:
         st.subheader("Your Friends")
         my_data = load_user_data(current_user)
@@ -429,16 +459,103 @@ def render_community_tab(current_user, coins_df, fiat):
                         req_ref = user_ref.collection('friend_requests').document(req_user)
                         batch.delete(req_ref)
                         batch.commit()
+                        grant_xp(current_user, 10)
                         st.success(f"You are now friends with {req_user}!")
                         st.rerun()
                 with col3:
                     if st.button("Decline", key=f"decline_{req_user}"):
                         db.collection('users').document(current_user).collection('friend_requests').document(req_user).delete()
                         st.rerun()
-    
-    if auto_refresh_chat:
-        st.components.v1.html("<meta http-equiv='refresh' content='15'>", height=0)
+                        
+    with tab4:
+        st.subheader("Add Custom Emotes")
+        with st.form("add_emote"):
+            emote_name = st.text_input("Emote Name (e.g., pog)")
+            emote_url = st.text_input("Image URL")
+            if st.form_submit_button("Add Emote"):
+                if emote_name and emote_url:
+                    db.collection('emotes').document(emote_name).set({'url': emote_url})
+                    st.success("Emote added!")
+                    st.cache_data.clear()
+                else:
+                    st.error("Please provide a name and URL.")
 
+def render_simulator_tab(current_user, coins_df, fiat):
+    st.markdown('<h2 class="rainbow-text-sm">Simulator & Games</h2>', unsafe_allow_html=True)
+    user_data = load_user_data(current_user)
+    wallet = user_data.get('virtual_wallet', {'USD': 10000.0})
+    st.metric("Your Simulator Wallet", f"${wallet.get('USD', 0):,.2f} USD")
+
+    tab1, tab2 = st.tabs(["📈 Simulated Trading", "🎲 Coin Flip"])
+
+    with tab1:
+        st.subheader("Simulated Trading")
+        all_coins = coins_df.sort_values('name').copy()
+        all_coins['display'] = all_coins['name'] + " (" + all_coins['symbol'] + ")"
+        
+        trade_type = st.radio("Action", ["Buy", "Sell"], horizontal=True)
+        selected_coin_display = st.selectbox("Select Coin", all_coins['display'].tolist())
+        selected_symbol = selected_coin_display.split('(')[-1][:-1]
+        
+        current_price = coins_df.loc[coins_df['symbol'] == selected_symbol, 'price'].iloc[0]
+        st.info(f"Current Market Price for {selected_symbol}: ${current_price:,.2f}")
+
+        if trade_type == "Buy":
+            spend_amount = st.number_input("Amount of USD to spend", min_value=0.0, max_value=wallet.get('USD', 0.0), step=100.0)
+            if st.button("Buy Simulated Crypto"):
+                if spend_amount > 0:
+                    crypto_bought = spend_amount / current_price
+                    wallet['USD'] -= spend_amount
+                    wallet[selected_symbol] = wallet.get(selected_symbol, 0.0) + crypto_bought
+                    save_user_data(current_user, {'virtual_wallet': wallet})
+                    grant_xp(current_user, 5)
+                    st.success(f"Successfully bought {crypto_bought:,.6f} {selected_symbol}!")
+                    st.rerun()
+        else: # Sell
+            current_balance = wallet.get(selected_symbol, 0.0)
+            sell_amount = st.number_input(f"Amount of {selected_symbol} to sell", min_value=0.0, max_value=current_balance, format="%.8f")
+            if st.button("Sell Simulated Crypto"):
+                if sell_amount > 0:
+                    usd_gained = sell_amount * current_price
+                    wallet['USD'] += usd_gained
+                    wallet[selected_symbol] -= sell_amount
+                    save_user_data(current_user, {'virtual_wallet': wallet})
+                    grant_xp(current_user, 5)
+                    st.success(f"Successfully sold {sell_amount:,.6f} {selected_symbol} for ${usd_gained:,.2f} USD!")
+                    st.rerun()
+
+        st.subheader("Your Simulated Holdings")
+        virtual_holdings = {k: v for k, v in wallet.items() if k != 'USD' and v > 0}
+        if not virtual_holdings:
+            st.info("You don't own any simulated crypto yet.")
+        else:
+            for symbol, qty in virtual_holdings.items():
+                st.metric(symbol, f"{qty:,.6f}")
+
+    with tab2:
+        st.subheader("Coin Flip")
+        usd_balance = wallet.get('USD', 0.0)
+        if usd_balance < 1.0:
+            st.warning("You don't have enough USD to play Coin Flip. Go trade something to earn more!")
+        else:
+            wager = st.number_input("Wager Amount (USD)", min_value=1.0, max_value=usd_balance, step=50.0)
+            choice = st.radio("Choose your side", ["Heads", "Tails"], horizontal=True)
+            if st.button("Flip Coin!"):
+                with st.spinner("Flipping..."):
+                    time.sleep(2)
+                    result = random.choice(["Heads", "Tails"])
+                    st.header(f"It's... {result}!")
+                    if choice == result:
+                        winnings = wager * 0.9 # House edge
+                        wallet['USD'] += winnings
+                        st.success(f"You win! You get ${winnings:,.2f} USD.")
+                        grant_xp(current_user, int(winnings / 100))
+                    else:
+                        wallet['USD'] -= wager
+                        st.error(f"You lose! You lost ${wager:,.2f} USD.")
+                    save_user_data(current_user, {'virtual_wallet': wallet})
+                    time.sleep(2)
+                    st.rerun()
 
 def render_portfolio_component(username, coins_df, fiat, is_comparison=False):
     if not is_comparison: st.markdown(f'<h3 class="rainbow-text-sm">Portfolio for {username}</h3>', unsafe_allow_html=True)
@@ -463,7 +580,6 @@ def render_portfolio_component(username, coins_df, fiat, is_comparison=False):
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     if 'dark_theme' not in st.session_state: st.session_state.dark_theme = True
-    
     st.sidebar.checkbox("Dark Theme", key='dark_theme')
     apply_theme()
     
@@ -476,13 +592,13 @@ def main():
             user_data = load_user_data(st.session_state.username)
             pfp = user_data.get('pfp_url', '')
             pfp_html = f'<img src="{pfp}" class="pfp-sidebar" onerror="this.src=\'https://placehold.co/40x40/222/fff?text=??\';">' if pfp else ""
-            st.markdown(f"""
-                <div style="display: flex; align-items: center; margin-bottom: 10px;">
-                    <span style="flex-grow: 1;">Logged in as **{st.session_state.username}**</span>
-                    {pfp_html}
-                </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f'<div style="display: flex; align-items: center; margin-bottom: 10px;"><span style="flex-grow: 1;">Logged in as <b>{st.session_state.username}</b></span>{pfp_html}</div>', unsafe_allow_html=True)
             
+            level = user_data.get('level', 1)
+            xp = user_data.get('xp', 0)
+            xp_needed = get_xp_for_level(level)
+            st.progress(xp / xp_needed if xp_needed > 0 else 0, text=f"Level {level} ({xp}/{xp_needed} XP)")
+
             if st.button("Logout"):
                 save_user_data(st.session_state.username, {'last_seen': datetime.now(timezone.utc) - timedelta(minutes=10)})
                 for key in list(st.session_state.keys()):
@@ -506,7 +622,8 @@ def main():
                         if not new_user or not new_pass: st.error("Fields cannot be empty.")
                         elif user_doc.exists or new_user in st.secrets.get("passwords", {}): st.error("Username already exists.")
                         else:
-                            save_user_data(new_user, {'hashed_password': hash_password(new_pass), 'friends': [], 'pfp_url': ''})
+                            user_data = {'hashed_password': hash_password(new_pass), 'friends': [], 'pfp_url': '', 'level': 1, 'xp': 0, 'virtual_wallet': {'USD': 10000.0}}
+                            save_user_data(new_user, user_data)
                             st.success("Account created! Please log in.")
             st.info("👋 Welcome! Please log in or create an account to begin.")
             st.stop()
@@ -548,17 +665,22 @@ def main():
             except IndexError: pass
 
     st.markdown("---")
-    tab1, tab2, tab3, tab4 = st.tabs(["📈 Overview", "📉 Historical", "💼 Portfolio Tracker", "🌐 Community"])
+    main_tabs = ["📈 Overview", "📉 Historical", "💼 Portfolio Tracker", "🌐 Community", "🏆 Simulator & Games"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(main_tabs)
+    
     with tab1: render_overview_tab(coins_df, fiat)
     with tab2: render_historical_tab(coins_df, selected_coins, fiat, timeframe, chart_h)
     with tab3: render_portfolio_tab(coins_df, fiat, username)
     with tab4: render_community_tab(username, coins_df, fiat)
+    with tab5: render_simulator_tab(username, coins_df, fiat)
 
-    # Update user's last_seen timestamp periodically
     if 'last_seen_update' not in st.session_state or (datetime.now(timezone.utc) - st.session_state.last_seen_update).total_seconds() > 60:
         save_user_data(username, {'last_seen': datetime.now(timezone.utc)})
         st.session_state.last_seen_update = datetime.now(timezone.utc)
-
+        
+    if st.session_state.get('leveled_up_message'):
+        st.toast(st.session_state.leveled_up_message)
+        del st.session_state.leveled_up_message
 
 if __name__ == "__main__":
     main()
