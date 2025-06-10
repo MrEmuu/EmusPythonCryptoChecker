@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Tuple, Union, List, Dict
 import os
 import re
@@ -34,7 +34,7 @@ def initialize_firebase():
         if not firebase_admin._apps:
             firebase_admin.initialize_app(credentials.Certificate(cred_dict))
     except Exception as e:
-        st.error(f"Firebase initialization failed: {e}. Ensure secrets are set.")
+        st.error(f"Firebase initialization failed: {e}. Ensure secrets.toml is configured.")
         st.stop()
 
 initialize_firebase()
@@ -146,12 +146,34 @@ def apply_theme():
     dark_theme = {"bg": "#0a0a20", "text": "#fff", "table_bg": "#12122e", "header_bg": "#1f1f4d", "header_text": "#0ff"}
     light_theme = {"bg": "#FFFFFF", "text": "#31333F", "table_bg": "#f0f2f6", "header_bg": "#e0e0e0", "header_text": "#31333F"}
     theme = dark_theme if dark else light_theme
-    css = f"<style>{FONT} body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }} .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }} .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }} .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }} .rainbow-text-sm {{ font-size: 1.75rem; }} #MainMenu, footer {{ visibility: hidden; }} .pfp-sidebar {{ border-radius: 50%; object-fit: cover; width: 35px; height: 35px; vertical-align: middle; margin-left: 10px; }}"
+    css = f"""
+        <style>
+            {FONT}
+            body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }}
+            .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }}
+            .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }}
+            .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }}
+            .rainbow-text-sm {{ font-size: 1.75rem; }}
+            #MainMenu, footer {{ visibility: hidden; }}
+            .pfp-sidebar {{ border-radius: 50%; object-fit: cover; width: 35px; height: 35px; vertical-align: middle; margin-left: 10px; }}
+            .online-indicator {{ height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: middle; }}
+            .online {{ background-color: #2de040; }} .offline {{ background-color: #888; }}
+            .chat-bubble {{ padding: 10px 15px; border-radius: 20px; margin-bottom: 5px; display: inline-block; max-width: 100%; word-wrap: break-word; }}
+            .chat-bubble.user {{ background: linear-gradient(90deg, #6a11cb 0%, #2575fc 100%); color: white; border-bottom-right-radius: 5px; }}
+            .chat-bubble.other {{ background: #333; color: white; border-bottom-left-radius: 5px; }}
+            .chat-row {{ display: flex; margin-bottom: 10px; align-items: flex-end;}}
+            .chat-row.user {{ justify-content: flex-end; }}
+            .chat-pfp {{ width: 40px; height: 40px; border-radius: 50%; object-fit: cover; align-self: flex-start; }}
+            .chat-row.user .chat-pfp {{ margin-left: 10px; }}
+            .chat-row.other .chat-pfp {{ margin-right: 10px; }}
+            .chat-content {{ max-width: 80%; }}
+        </style>
+    """
     gradient_animation = "background-size: 200% 200%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: rainbow-flow 12s ease infinite;"
     keyframes = "@keyframes rainbow-flow { 0%{{background-position:0% 50%}} 50%{{background-position:100% 50%} 100%{{background-position:0% 50%} }"
     if dark: css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, #ff0080, #ff4500, #ff8c00, #ffff00); {gradient_animation} }} {keyframes}"
     else: css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, cyan, magenta, cyan); {gradient_animation} }} {keyframes}"
-    st.markdown(f"{css}</style>", unsafe_allow_html=True)
+    st.markdown(css, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -219,7 +241,7 @@ def render_portfolio_tab(coins_df, fiat, username):
                 if quantity > 0:
                     coin_id = all_coins.loc[all_coins['display'] == st.session_state.portfolio_coin_select, 'id'].iloc[0]
                     transactions = load_portfolio_transactions(username)
-                    transactions.append({"Coin ID": coin_id, "Type": trans_type, "Quantity": quantity, "Price per Coin": price_per_coin, "Date": datetime.now().isoformat()})
+                    transactions.append({"Coin ID": coin_id, "Type": trans_type, "Quantity": quantity, "Price per Coin": price_per_coin, "Date": datetime.now(timezone.utc).isoformat()})
                     save_portfolio_transactions(transactions, username)
                     st.success("Transaction added!")
                     del st.session_state.holdings
@@ -294,41 +316,79 @@ def render_community_tab(current_user, coins_df, fiat):
     st.markdown('<h2 class="rainbow-text-sm">Community Hub</h2>', unsafe_allow_html=True)
     auto_refresh_chat = st.toggle("Auto-refresh chat", value=True, help="Automatically fetch new messages every 15 seconds.")
     
-    tab1, tab2 = st.tabs(["💬 Chat Room", "👥 Users"])
+    tab1, tab2, tab3 = st.tabs(["💬 Chat Room", "👥 Users", "🤝 Friends"])
 
     with tab1:
+        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
         chat_ref = db.collection('chat').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(50)
         chat_docs = list(chat_ref.stream())
         for msg_doc in reversed(chat_docs):
             msg = msg_doc.to_dict()
+            is_user = msg.get('username') == current_user
             user_data = load_user_data(msg.get('username','?'))
-            pfp = user_data.get('pfp_url', 'https://placehold.co/50x50/222/fff?text=??')
-            with st.chat_message(name=" ", avatar=pfp):
-                st.markdown(f"**{msg.get('username','?')}**")
-                st.caption(f"_{msg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}_")
-                st.markdown(msg['message'])
+            pfp = user_data.get('pfp_url', 'https://placehold.co/40x40/222/fff?text=??')
+            
+            row_class = "user" if is_user else "other"
+            bubble_class = "user" if is_user else "other"
+            
+            if is_user:
+                st.markdown(f"""
+                    <div class="chat-row {row_class}">
+                        <div class="chat-content">
+                            <div class="chat-bubble {bubble_class}">{msg['message']}</div>
+                            <div style="text-align: right; font-size: 0.7rem; color: #888;">{msg['timestamp'].strftime('%H:%M')}</div>
+                        </div>
+                        <img src="{pfp}" class="chat-pfp" onerror="this.src='https://placehold.co/40x40/222/fff?text=??';">
+                    </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                    <div class="chat-row {row_class}">
+                        <img src="{pfp}" class="chat-pfp" onerror="this.src='https://placehold.co/40x40/222/fff?text=??';">
+                        <div class="chat-content">
+                            <b>{msg.get('username','?')}</b>
+                            <div class="chat-bubble {bubble_class}">{msg['message']}</div>
+                            <div style="text-align: left; font-size: 0.7rem; color: #888;">{msg['timestamp'].strftime('%H:%M')}</div>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
         if prompt := st.chat_input("Say something..."):
-            db.collection('chat').add({'username': current_user, 'message': prompt, 'timestamp': datetime.now()})
+            db.collection('chat').add({'username': current_user, 'message': prompt, 'timestamp': datetime.now(timezone.utc)})
             st.rerun()
 
     with tab2:
         st.subheader("Registered Users")
         users_docs = db.collection('users').stream()
-        all_usernames = [doc.id for doc in users_docs]
-        selected_user = st.selectbox("View a user's profile:", all_usernames)
+        all_users = {doc.id: doc.to_dict() for doc in users_docs}
+        
+        for username, data in all_users.items():
+            last_seen = data.get('last_seen')
+            if isinstance(last_seen, datetime):
+                 is_online = (datetime.now(timezone.utc) - last_seen).total_seconds() < 300
+            else:
+                 is_online = False
+            status_class = "online" if is_online else "offline"
+            st.markdown(f'<div><span class="online-indicator {status_class}"></span> {username}</div>', unsafe_allow_html=True)
+
+        selected_user = st.selectbox("View a user's profile:", list(all_users.keys()))
 
         if selected_user:
             st.markdown("---")
             render_portfolio_component(selected_user, coins_df, fiat, is_comparison=True)
-            if selected_user != current_user and st.button(f"Compare Portfolios with {selected_user}"):
-                st.session_state.compare_user = selected_user
+            if selected_user != current_user:
+                if st.button(f"➕ Add {selected_user} as a Friend"):
+                    db.collection('users').document(selected_user).collection('friend_requests').document(current_user).set({'from': current_user, 'timestamp': datetime.now(timezone.utc)})
+                    st.success(f"Friend request sent to {selected_user}!")
+                if st.button(f"Compare Portfolios with {selected_user}"):
+                    st.session_state.compare_user = selected_user
         
         if st.session_state.get('compare_user'):
             compare_with = st.session_state.compare_user
             st.markdown(f'<h3 class="rainbow-text-sm">Comparison: {current_user} vs. {compare_with}</h3>', unsafe_allow_html=True)
             my_portfolio_df = render_portfolio_component(current_user, coins_df, fiat, is_comparison=True)
             their_portfolio_df = render_portfolio_component(compare_with, coins_df, fiat, is_comparison=True)
-
             if not my_portfolio_df.empty and not their_portfolio_df.empty:
                 merged = pd.merge(my_portfolio_df, their_portfolio_df, on="Symbol", how="inner", suffixes=(f'_{current_user}', f'_{compare_with}'))
                 if not merged.empty:
@@ -336,8 +396,48 @@ def render_community_tab(current_user, coins_df, fiat):
                     st.dataframe(merged[['Symbol', f'Value ({fiat})_{current_user}', f'Value ({fiat})_{compare_with}']].set_index('Symbol'))
                 else:
                     st.info("You and this user do not hold any of the same assets to compare.")
+
+            
+    with tab3:
+        st.subheader("Your Friends")
+        my_data = load_user_data(current_user)
+        friends = my_data.get('friends', [])
+        if not friends:
+            st.info("You haven't added any friends yet.")
+        else:
+            for friend in friends:
+                st.write(friend)
+
+        st.markdown("---")
+        st.subheader("Friend Requests")
+        requests_ref = db.collection('users').document(current_user).collection('friend_requests').stream()
+        incoming_requests = {req.id: req.to_dict() for req in requests_ref}
+        
+        if not incoming_requests:
+            st.info("No new friend requests.")
+        else:
+            for req_user, req_data in incoming_requests.items():
+                col1, col2, col3 = st.columns([2,1,1])
+                with col1: st.write(f"**{req_user}** wants to be your friend.")
+                with col2: 
+                    if st.button("Accept", key=f"accept_{req_user}"):
+                        batch = db.batch()
+                        user_ref = db.collection('users').document(current_user)
+                        batch.update(user_ref, {'friends': firestore.ArrayUnion([req_user])})
+                        friend_ref = db.collection('users').document(req_user)
+                        batch.update(friend_ref, {'friends': firestore.ArrayUnion([current_user])})
+                        req_ref = user_ref.collection('friend_requests').document(req_user)
+                        batch.delete(req_ref)
+                        batch.commit()
+                        st.success(f"You are now friends with {req_user}!")
+                        st.rerun()
+                with col3:
+                    if st.button("Decline", key=f"decline_{req_user}"):
+                        db.collection('users').document(current_user).collection('friend_requests').document(req_user).delete()
+                        st.rerun()
     
-    return auto_refresh_chat
+    if auto_refresh_chat:
+        st.components.v1.html("<meta http-equiv='refresh' content='15'>", height=0)
 
 
 def render_portfolio_component(username, coins_df, fiat, is_comparison=False):
@@ -373,15 +473,18 @@ def main():
 
     with st.sidebar.expander("User Account", expanded=True):
         if 'username' in st.session_state:
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.success(f"Logged in as **{st.session_state.username}**")
-            with col2:
-                user_data = load_user_data(st.session_state.username)
-                pfp = user_data.get('pfp_url', '')
-                if pfp: st.image(pfp, width=35)
+            user_data = load_user_data(st.session_state.username)
+            pfp = user_data.get('pfp_url', '')
+            pfp_html = f'<img src="{pfp}" class="pfp-sidebar" onerror="this.src=\'https://placehold.co/40x40/222/fff?text=??\';">' if pfp else ""
+            st.markdown(f"""
+                <div style="display: flex; align-items: center; margin-bottom: 10px;">
+                    <span style="flex-grow: 1;">Logged in as **{st.session_state.username}**</span>
+                    {pfp_html}
+                </div>
+            """, unsafe_allow_html=True)
             
             if st.button("Logout"):
+                save_user_data(st.session_state.username, {'last_seen': datetime.now(timezone.utc) - timedelta(minutes=10)})
                 for key in list(st.session_state.keys()):
                     if key != 'dark_theme': del st.session_state[key]
                 st.rerun()
@@ -403,7 +506,7 @@ def main():
                         if not new_user or not new_pass: st.error("Fields cannot be empty.")
                         elif user_doc.exists or new_user in st.secrets.get("passwords", {}): st.error("Username already exists.")
                         else:
-                            save_user_data(new_user, {'hashed_password': hash_password(new_pass)})
+                            save_user_data(new_user, {'hashed_password': hash_password(new_pass), 'friends': [], 'pfp_url': ''})
                             st.success("Account created! Please log in.")
             st.info("👋 Welcome! Please log in or create an account to begin.")
             st.stop()
@@ -449,12 +552,13 @@ def main():
     with tab1: render_overview_tab(coins_df, fiat)
     with tab2: render_historical_tab(coins_df, selected_coins, fiat, timeframe, chart_h)
     with tab3: render_portfolio_tab(coins_df, fiat, username)
-    auto_refresh_chat = False
-    with tab4: auto_refresh_chat = render_community_tab(username, coins_df, fiat)
+    with tab4: render_community_tab(username, coins_df, fiat)
 
-    if auto_refresh_chat:
-        time.sleep(15)
-        st.rerun()
+    # Update user's last_seen timestamp periodically
+    if 'last_seen_update' not in st.session_state or (datetime.now(timezone.utc) - st.session_state.last_seen_update).total_seconds() > 60:
+        save_user_data(username, {'last_seen': datetime.now(timezone.utc)})
+        st.session_state.last_seen_update = datetime.now(timezone.utc)
+
 
 if __name__ == "__main__":
     main()
