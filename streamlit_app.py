@@ -7,6 +7,7 @@ import os
 import re
 import json
 import hashlib
+import time
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -33,7 +34,7 @@ def initialize_firebase():
         if not firebase_admin._apps:
             firebase_admin.initialize_app(credentials.Certificate(cred_dict))
     except Exception as e:
-        st.error(f"Firebase initialization failed. Ensure secrets are set. Error: {e}")
+        st.error(f"Firebase initialization failed: {e}. Ensure secrets are set.")
         st.stop()
 
 initialize_firebase()
@@ -44,6 +45,7 @@ db = firestore.client()
 # ─────────────────────────────────────────────────────────────────────────────
 SUPPORTED_CURRENCIES = ['USD', 'EUR', 'JPY', 'GBP', 'AUD', 'CAD', 'CHF', 'CNY', 'INR', 'BRL', 'RUB', 'KRW', 'SGD', 'MXN', 'NZD', 'HKD', 'NOK', 'SEK', 'ZAR', 'TRY']
 TIMEFRAMES = {"24h": "1", "7d": "7", "1m": "30", "3m": "90", "1y": "365", "max": "max"}
+EXCHANGE_PAIRS = {"xmr_btc": {"fee_percent": 0.5, "fee_fixed": 0.0005, "min_amount": 0.01}, "btc_eth": {"fee_percent": 0.3, "fee_fixed": 0.0003, "min_amount": 0.001}, "eth_usdt": {"fee_percent": 0.2, "fee_fixed": 1.0, "min_amount": 0.1}}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper & Utility Functions
@@ -59,7 +61,7 @@ def hash_password(password: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 # Data Fetching & User/Portfolio Management (Firestore)
 # ─────────────────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=300) # Increased TTL to 5 minutes for API stability
+@st.cache_data(ttl=300)
 def get_coins_list(fiat: str) -> Tuple[pd.DataFrame, str]:
     fiat_lower = fiat.lower()
     try:
@@ -145,7 +147,7 @@ def apply_theme():
     dark_theme = {"bg": "#0a0a20", "text": "#fff", "table_bg": "#12122e", "header_bg": "#1f1f4d", "header_text": "#0ff"}
     light_theme = {"bg": "#FFFFFF", "text": "#31333F", "table_bg": "#f0f2f6", "header_bg": "#e0e0e0", "header_text": "#31333F"}
     theme = dark_theme if dark else light_theme
-    css = f"<style>{FONT} body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }} .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }} .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }} .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }} .rainbow-text-sm {{ font-size: 1.75rem; }} #MainMenu, footer {{ visibility: hidden; }}"
+    css = f"<style>{FONT} body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }} .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }} .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }} .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }} .rainbow-text-sm {{ font-size: 1.75rem; }} #MainMenu, footer {{ visibility: hidden; }} .pfp-sidebar {{ border-radius: 50%; object-fit: cover; width: 40px; height: 40px; }}"
     gradient_animation = "background-size: 200% 200%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: rainbow-flow 12s ease infinite;"
     keyframes = "@keyframes rainbow-flow { 0%{{background-position:0% 50%}} 50%{{background-position:100% 50%} 100%{{background-position:0% 50%} }"
     if dark: css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, #ff0080, #ff4500, #ff8c00, #ffff00); {gradient_animation} }} {keyframes}"
@@ -300,9 +302,10 @@ def render_community_tab(current_user, coins_df, fiat):
             msg = msg_doc.to_dict()
             user_data = load_user_data(msg.get('username','?'))
             pfp = user_data.get('pfp_url', 'https://placehold.co/50x50/222/fff?text=??')
-            with st.chat_message(name=msg.get('username','?'), avatar=pfp):
-                st.write(f"_{msg['timestamp'].strftime('%H:%M')}_")
+            with st.chat_message(name=" ", avatar=pfp):
+                st.markdown(f"**{msg.get('username','?')}**")
                 st.markdown(msg['message'])
+                st.caption(f"_{msg['timestamp'].strftime('%H:%M:%S')}_")
         if prompt := st.chat_input("Say something..."):
             db.collection('chat').add({'username': current_user, 'message': prompt, 'timestamp': datetime.now()})
             st.rerun()
@@ -315,7 +318,7 @@ def render_community_tab(current_user, coins_df, fiat):
 
         if selected_user:
             st.markdown("---")
-            render_portfolio_component(selected_user, coins_df, fiat)
+            render_portfolio_component(selected_user, coins_df, fiat, is_comparison=True)
             if selected_user != current_user and st.button(f"Compare Portfolios with {selected_user}"):
                 st.session_state.compare_user = selected_user
         
@@ -359,7 +362,6 @@ def render_portfolio_component(username, coins_df, fiat, is_comparison=False):
 def main():
     if 'dark_theme' not in st.session_state: st.session_state.dark_theme = True
     
-    # FIX: Remove `value` from checkbox, state is handled by the key.
     st.sidebar.checkbox("Dark Theme", key='dark_theme')
     apply_theme()
     
@@ -369,7 +371,15 @@ def main():
 
     st.sidebar.subheader("User Account")
     if 'username' in st.session_state:
-        st.sidebar.success(f"Logged in as **{st.session_state.username}**")
+        col1, col2 = st.sidebar.columns([3, 1])
+        with col1:
+            st.success(f"Logged in as **{st.session_state.username}**")
+        with col2:
+            user_data = load_user_data(st.session_state.username)
+            pfp = user_data.get('pfp_url', 'https://placehold.co/50x50/222/fff?text=??')
+            # FIX: Corrected typo `aptions` to `caption` and simplified call
+            st.image(pfp, width=40)
+            
         if st.sidebar.button("Logout"):
             for key in list(st.session_state.keys()):
                 if key != 'dark_theme': del st.session_state[key]
@@ -405,10 +415,10 @@ def main():
         if st.button("Update Profile"):
             save_user_data(username, {'pfp_url': pfp_url})
             st.success("Profile updated!")
-        if pfp_url:
-            st.image(pfp_url, width=100)
+        if pfp_url: st.image(pfp_url, width=100)
 
         st.markdown("---"); st.subheader("Market Controls")
+        auto_refresh_chat = st.toggle("Auto-refresh chat", value=True)
         fiat = st.selectbox("Fiat Currency", SUPPORTED_CURRENCIES, index=SUPPORTED_CURRENCIES.index('USD'))
         with st.spinner("Loading coin list..."): coins_df, status = get_coins_list(fiat)
         if status != "coingecko_ok": st.warning("Using fallback API.")
@@ -441,6 +451,10 @@ def main():
     with tab2: render_historical_tab(coins_df, selected_coins, fiat, timeframe, chart_h)
     with tab3: render_portfolio_tab(coins_df, fiat, username)
     with tab4: render_community_tab(username, coins_df, fiat)
+
+    if auto_refresh_chat:
+        time.sleep(15)
+        st.rerun()
 
 if __name__ == "__main__":
     main()
