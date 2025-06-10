@@ -3,3 +3,5 @@ requests
 pandas
 plotly
 kaleido
+firebase-admin
+google-cloud-firestore

@@ -2,11 +2,13 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
-from typing import Tuple, Union
+from typing import Tuple, Union, List, Dict
 import os
 import re
 import json
 import hashlib
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # Plotly support
 try:
@@ -20,13 +22,28 @@ except ImportError:
 st.set_page_config(page_title="Emus Crypto Dashboard", layout="wide")
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Firebase Initialization
+# ─────────────────────────────────────────────────────────────────────────────
+@st.cache_resource
+def initialize_firebase():
+    """Initializes Firebase Admin SDK using Streamlit secrets."""
+    try:
+        cred_dict = dict(st.secrets.firebase_service_account)
+        cred_dict['private_key'] = cred_dict['private_key'].replace('\\n', '\n')
+        if not firebase_admin._apps:
+            firebase_admin.initialize_app(credentials.Certificate(cred_dict))
+    except Exception as e:
+        st.error(f"Firebase initialization failed. Ensure secrets are set. Error: {e}")
+        st.stop()
+
+initialize_firebase()
+db = firestore.client()
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Constants
 # ─────────────────────────────────────────────────────────────────────────────
 SUPPORTED_CURRENCIES = ['USD', 'EUR', 'JPY', 'GBP', 'AUD', 'CAD', 'CHF', 'CNY', 'INR', 'BRL', 'RUB', 'KRW', 'SGD', 'MXN', 'NZD', 'HKD', 'NOK', 'SEK', 'ZAR', 'TRY']
 TIMEFRAMES = {"24h": "1", "7d": "7", "1m": "30", "3m": "90", "1y": "365", "max": "max"}
-USERS_FILE = "users.json"
-EXCHANGE_PAIRS = {"xmr_btc": {"fee_percent": 0.5, "fee_fixed": 0.0005, "min_amount": 0.01}, "btc_eth": {"fee_percent": 0.3, "fee_fixed": 0.0003, "min_amount": 0.001}, "eth_usdt": {"fee_percent": 0.2, "fee_fixed": 1.0, "min_amount": 0.1}}
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper & Utility Functions
@@ -39,17 +56,10 @@ def to_float(value) -> float:
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
-def load_users() -> dict:
-    if not os.path.exists(USERS_FILE): return {}
-    with open(USERS_FILE, 'r') as f: return json.load(f)
-
-def save_users(users_data: dict):
-    with open(USERS_FILE, 'w') as f: json.dump(users_data, f, indent=4)
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Data Fetching & User Management
+# Data Fetching & User/Portfolio Management (Firestore)
 # ─────────────────────────────────────────────────────────────────────────────
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300) # Increased TTL to 5 minutes for API stability
 def get_coins_list(fiat: str) -> Tuple[pd.DataFrame, str]:
     fiat_lower = fiat.lower()
     try:
@@ -78,7 +88,7 @@ def fetch_trending_symbols() -> list[str]:
         r.raise_for_status()
         return [c["item"]["symbol"].upper() for c in r.json().get("coins", [])]
     except requests.RequestException: return []
-
+    
 @st.cache_data(ttl=60)
 def get_historical_data(coin_id: str, fiat: str, days: Union[int,str]) -> pd.DataFrame:
     try:
@@ -100,28 +110,30 @@ def get_fiat_conversion_rate(fiat: str) -> float:
         resp = requests.get(f"https://api.exchangerate-api.com/v4/latest/USD", timeout=10)
         resp.raise_for_status()
         return resp.json().get('rates', {}).get(fiat.upper(), 1.0)
-    except requests.RequestException:
-        return 1.0
+    except requests.RequestException: return 1.0
 
-def get_portfolio_path(username: str) -> str:
-    safe_username = re.sub(r'[^a-zA-Z0-9_-]', '', username)
-    return f"{safe_username}_portfolio.csv"
+def load_user_data(username: str) -> dict:
+    doc_ref = db.collection('users').document(username)
+    doc = doc_ref.get()
+    return doc.to_dict() if doc.exists else {}
 
-def load_portfolio(username: str) -> pd.DataFrame:
-    path = get_portfolio_path(username)
-    if os.path.exists(path): return pd.read_csv(path)
-    return pd.DataFrame(columns=["Coin ID", "Type", "Quantity", "Price per Coin", "Date"])
+def save_user_data(username: str, data: dict):
+    db.collection('users').document(username).set(data, merge=True)
 
-def save_portfolio(df: pd.DataFrame, username: str):
-    df.to_csv(get_portfolio_path(username), index=False)
+def load_portfolio_transactions(username: str) -> List[Dict]:
+    user_data = load_user_data(username)
+    return user_data.get('portfolio', [])
+
+def save_portfolio_transactions(transactions: List[Dict], username: str):
+    save_user_data(username, {'portfolio': transactions})
 
 def check_password(username, password) -> bool:
     try:
-        if username in st.secrets["passwords"] and password == st.secrets["passwords"][username]: return True
+        if username in st.secrets.get("passwords", {}) and password == st.secrets["passwords"][username]: return True
     except (AttributeError, KeyError): pass
-    users = load_users()
+    user_data = load_user_data(username)
     hashed_password = hash_password(password)
-    if username in users and users[username] == hashed_password: return True
+    if user_data and user_data.get('hashed_password') == hashed_password: return True
     return False
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -130,44 +142,29 @@ def check_password(username, password) -> bool:
 def apply_theme():
     dark = st.session_state.get('dark_theme', True)
     FONT = "@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');"
-    
     dark_theme = {"bg": "#0a0a20", "text": "#fff", "table_bg": "#12122e", "header_bg": "#1f1f4d", "header_text": "#0ff"}
     light_theme = {"bg": "#FFFFFF", "text": "#31333F", "table_bg": "#f0f2f6", "header_bg": "#e0e0e0", "header_text": "#31333F"}
     theme = dark_theme if dark else light_theme
-    
-    css = f"""
-        <style>
-            {FONT}
-            body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }}
-            .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }}
-            .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }}
-            .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }}
-            .rainbow-text-sm {{ font-size: 1.75rem; }}
-            #MainMenu, footer {{ visibility: hidden; }}
-    """
-    
+    css = f"<style>{FONT} body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }} .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }} .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }} .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }} .rainbow-text-sm {{ font-size: 1.75rem; }} #MainMenu, footer {{ visibility: hidden; }}"
     gradient_animation = "background-size: 200% 200%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: rainbow-flow 12s ease infinite;"
-    keyframes = "@keyframes rainbow-flow { 0%{{background-position:0% 50%}} 50%{{background-position:100% 50%}} 100%{{background-position:0% 50%} }"
-    
-    if dark:
-        css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, #ff0080, #ff4500, #ff8c00, #ffff00); {gradient_animation} }} {keyframes}"
-    else:
-        css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, cyan, magenta, cyan); {gradient_animation} }} {keyframes}"
-
+    keyframes = "@keyframes rainbow-flow { 0%{{background-position:0% 50%}} 50%{{background-position:100% 50%} 100%{{background-position:0% 50%} }"
+    if dark: css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, #ff0080, #ff4500, #ff8c00, #ffff00); {gradient_animation} }} {keyframes}"
+    else: css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, cyan, magenta, cyan); {gradient_animation} }} {keyframes}"
     st.markdown(f"{css}</style>", unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UI Rendering Functions
 # ─────────────────────────────────────────────────────────────────────────────
-def calculate_holdings(transactions_df: pd.DataFrame) -> dict:
+def calculate_holdings(transactions: List[Dict]) -> dict:
     holdings = {}
-    for _, row in transactions_df.iterrows():
-        qty = row['Quantity'] if row['Type'] == 'Buy' else -row['Quantity']
-        cost = qty * row['Price per Coin']
-        if row['Coin ID'] not in holdings: holdings[row['Coin ID']] = {'quantity': 0, 'total_cost': 0}
-        holdings[row['Coin ID']]['quantity'] += qty
-        holdings[row['Coin ID']]['total_cost'] += cost
+    for row in transactions:
+        qty = to_float(row.get('Quantity')) if row.get('Type') == 'Buy' else -to_float(row.get('Quantity'))
+        cost = qty * to_float(row.get('Price per Coin'))
+        coin_id = row.get('Coin ID')
+        if coin_id not in holdings: holdings[coin_id] = {'quantity': 0, 'total_cost': 0}
+        holdings[coin_id]['quantity'] += qty
+        holdings[coin_id]['total_cost'] += cost
     return holdings
 
 def render_overview_tab(coins_df: pd.DataFrame, fiat: str):
@@ -200,7 +197,7 @@ def render_overview_tab(coins_df: pd.DataFrame, fiat: str):
 def render_portfolio_tab(coins_df, fiat, username):
     st.markdown('<h2 class="rainbow-text-sm">Portfolio Tracker</h2>', unsafe_allow_html=True)
     if 'holdings' not in st.session_state:
-        st.session_state.holdings = calculate_holdings(load_portfolio(username))
+        st.session_state.holdings = calculate_holdings(load_portfolio_transactions(username))
 
     def update_price_in_form():
         try:
@@ -220,9 +217,9 @@ def render_portfolio_tab(coins_df, fiat, username):
             if st.form_submit_button("Add Transaction"):
                 if quantity > 0:
                     coin_id = all_coins.loc[all_coins['display'] == st.session_state.portfolio_coin_select, 'id'].iloc[0]
-                    transactions_df = load_portfolio(username)
-                    new_tx = pd.DataFrame([{"Coin ID": coin_id, "Type": trans_type, "Quantity": quantity, "Price per Coin": price_per_coin, "Date": datetime.now().isoformat()}])
-                    save_portfolio(pd.concat([transactions_df, new_tx], ignore_index=True), username)
+                    transactions = load_portfolio_transactions(username)
+                    transactions.append({"Coin ID": coin_id, "Type": trans_type, "Quantity": quantity, "Price per Coin": price_per_coin, "Date": datetime.now().isoformat()})
+                    save_portfolio_transactions(transactions, username)
                     st.success("Transaction added!")
                     del st.session_state.holdings
                     st.rerun()
@@ -253,7 +250,7 @@ def render_portfolio_tab(coins_df, fiat, username):
         if st.session_state.get('confirm_delete'):
             if st.checkbox("I understand this is permanent."):
                 if st.button("CONFIRM DELETION"):
-                    os.remove(get_portfolio_path(username))
+                    save_portfolio_transactions([], username)
                     del st.session_state.holdings
                     del st.session_state.confirm_delete
                     st.success("Transaction history deleted.")
@@ -288,10 +285,73 @@ def render_historical_tab(coins_df, selected_symbols, fiat, timeframe, chart_typ
                 fig.add_trace(go.Candlestick(x=o.index, open=o["open"], high=o["high"], low=o["low"], close=o["close"]))
             else:
                 st.warning("Candlestick chart is only available for a single selected coin.")
-        
         st.plotly_chart(fig, use_container_width=True)
     elif not HAS_PLOTLY:
         st.line_chart(chart_data)
+
+def render_community_tab(current_user, coins_df, fiat):
+    st.markdown('<h2 class="rainbow-text-sm">Community Hub</h2>', unsafe_allow_html=True)
+    tab1, tab2 = st.tabs(["💬 Chat Room", "👥 Users"])
+
+    with tab1: # Chat Room
+        chat_ref = db.collection('chat').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(50)
+        chat_docs = list(chat_ref.stream())
+        for msg_doc in reversed(chat_docs):
+            msg = msg_doc.to_dict()
+            user_data = load_user_data(msg.get('username','?'))
+            pfp = user_data.get('pfp_url', 'https://placehold.co/50x50/222/fff?text=??')
+            with st.chat_message(name=msg.get('username','?'), avatar=pfp):
+                st.write(f"_{msg['timestamp'].strftime('%H:%M')}_")
+                st.markdown(msg['message'])
+        if prompt := st.chat_input("Say something..."):
+            db.collection('chat').add({'username': current_user, 'message': prompt, 'timestamp': datetime.now()})
+            st.rerun()
+
+    with tab2: # Users and Profiles
+        st.subheader("Registered Users")
+        users_docs = db.collection('users').stream()
+        all_usernames = [doc.id for doc in users_docs]
+        selected_user = st.selectbox("View a user's profile:", all_usernames)
+
+        if selected_user:
+            st.markdown("---")
+            render_portfolio_component(selected_user, coins_df, fiat)
+            if selected_user != current_user and st.button(f"Compare Portfolios with {selected_user}"):
+                st.session_state.compare_user = selected_user
+        
+        if st.session_state.get('compare_user'):
+            compare_with = st.session_state.compare_user
+            st.markdown(f'<h3 class="rainbow-text-sm">Comparison: {current_user} vs. {compare_with}</h3>', unsafe_allow_html=True)
+            
+            my_portfolio_df = render_portfolio_component(current_user, coins_df, fiat, is_comparison=True)
+            their_portfolio_df = render_portfolio_component(compare_with, coins_df, fiat, is_comparison=True)
+
+            if not my_portfolio_df.empty and not their_portfolio_df.empty:
+                merged = pd.merge(my_portfolio_df, their_portfolio_df, on="Symbol", how="inner", suffixes=(f'_{current_user}', f'_{compare_with}'))
+                if not merged.empty:
+                    st.markdown("---"); st.subheader("Side-by-Side Value")
+                    st.dataframe(merged[['Symbol', f'Value ({fiat})_{current_user}', f'Value ({fiat})_{compare_with}']].set_index('Symbol'))
+                else:
+                    st.info("You and this user do not hold any of the same assets to compare.")
+
+
+def render_portfolio_component(username, coins_df, fiat, is_comparison=False):
+    if not is_comparison: st.markdown(f'<h3 class="rainbow-text-sm">Portfolio for {username}</h3>', unsafe_allow_html=True)
+    transactions = load_portfolio_transactions(username)
+    if not transactions:
+        st.info(f"{username} has not added any transactions yet.")
+        return pd.DataFrame()
+    holdings = calculate_holdings(transactions)
+    portfolio_data = []
+    for coin_id, data in holdings.items():
+        if data['quantity'] > 0:
+            coin_info = coins_df[coins_df['id'] == coin_id]
+            if not coin_info.empty:
+                current_price = coin_info['price'].iloc[0]
+                portfolio_data.append({'Coin': coin_info['name'].iloc[0], 'Symbol': coin_info['symbol'].iloc[0], 'Quantity': data['quantity'], f'Value ({fiat})': data['quantity'] * current_price})
+    summary_df = pd.DataFrame(portfolio_data)
+    if not summary_df.empty: st.dataframe(summary_df.set_index('Coin'))
+    return summary_df
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN APPLICATION
@@ -299,7 +359,8 @@ def render_historical_tab(coins_df, selected_symbols, fiat, timeframe, chart_typ
 def main():
     if 'dark_theme' not in st.session_state: st.session_state.dark_theme = True
     
-    st.sidebar.checkbox("Dark Theme", value=st.session_state.dark_theme, key='dark_theme')
+    # FIX: Remove `value` from checkbox, state is handled by the key.
+    st.sidebar.checkbox("Dark Theme", key='dark_theme')
     apply_theme()
     
     st.markdown('<div class="rainbow-text">Emus Crypto Dashboard</div>', unsafe_allow_html=True)
@@ -327,19 +388,27 @@ def main():
             with st.form("signup_form"):
                 new_user, new_pass = st.text_input("New Username"), st.text_input("New Password", type="password")
                 if st.form_submit_button("Sign Up"):
-                    users = load_users()
+                    user_doc = db.collection('users').document(new_user).get()
                     if not new_user or not new_pass: st.error("Fields cannot be empty.")
-                    elif new_user in users or new_user in st.secrets.get("passwords", {}): st.error("Username already exists.")
+                    elif user_doc.exists or new_user in st.secrets.get("passwords", {}): st.error("Username already exists.")
                     else:
-                        users[new_user] = hash_password(new_pass)
-                        save_users(users)
+                        save_user_data(new_user, {'hashed_password': hash_password(new_pass)})
                         st.success("Account created! Please log in.")
         st.info("👋 Welcome! Please log in or create an account to begin.")
         st.stop()
     
     username = st.session_state.username
     with st.sidebar:
-        st.markdown("---"); st.subheader("Controls")
+        st.markdown("---"); st.subheader("Profile Settings")
+        user_data = load_user_data(username)
+        pfp_url = st.text_input("Profile Picture URL", value=user_data.get('pfp_url', ''))
+        if st.button("Update Profile"):
+            save_user_data(username, {'pfp_url': pfp_url})
+            st.success("Profile updated!")
+        if pfp_url:
+            st.image(pfp_url, width=100)
+
+        st.markdown("---"); st.subheader("Market Controls")
         fiat = st.selectbox("Fiat Currency", SUPPORTED_CURRENCIES, index=SUPPORTED_CURRENCIES.index('USD'))
         with st.spinner("Loading coin list..."): coins_df, status = get_coins_list(fiat)
         if status != "coingecko_ok": st.warning("Using fallback API.")
@@ -367,10 +436,11 @@ def main():
             except IndexError: pass
 
     st.markdown("---")
-    tab1, tab2, tab3 = st.tabs(["📈 Overview", "📉 Historical", "💼 Portfolio Tracker"])
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 Overview", "📉 Historical", "💼 Portfolio Tracker", "🌐 Community"])
     with tab1: render_overview_tab(coins_df, fiat)
     with tab2: render_historical_tab(coins_df, selected_coins, fiat, timeframe, chart_h)
     with tab3: render_portfolio_tab(coins_df, fiat, username)
+    with tab4: render_community_tab(username, coins_df, fiat)
 
 if __name__ == "__main__":
     main()
