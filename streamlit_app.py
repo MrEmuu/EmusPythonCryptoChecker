@@ -45,7 +45,6 @@ db = firestore.client()
 # ─────────────────────────────────────────────────────────────────────────────
 SUPPORTED_CURRENCIES = ['USD', 'EUR', 'JPY', 'GBP', 'AUD', 'CAD', 'CHF', 'CNY', 'INR', 'BRL', 'RUB', 'KRW', 'SGD', 'MXN', 'NZD', 'HKD', 'NOK', 'SEK', 'ZAR', 'TRY']
 TIMEFRAMES = {"24h": "1", "7d": "7", "1m": "30", "3m": "90", "1y": "365", "max": "max"}
-EXCHANGE_PAIRS = {"xmr_btc": {"fee_percent": 0.5, "fee_fixed": 0.0005, "min_amount": 0.01}, "btc_eth": {"fee_percent": 0.3, "fee_fixed": 0.0003, "min_amount": 0.001}, "eth_usdt": {"fee_percent": 0.2, "fee_fixed": 1.0, "min_amount": 0.1}}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper & Utility Functions
@@ -147,7 +146,7 @@ def apply_theme():
     dark_theme = {"bg": "#0a0a20", "text": "#fff", "table_bg": "#12122e", "header_bg": "#1f1f4d", "header_text": "#0ff"}
     light_theme = {"bg": "#FFFFFF", "text": "#31333F", "table_bg": "#f0f2f6", "header_bg": "#e0e0e0", "header_text": "#31333F"}
     theme = dark_theme if dark else light_theme
-    css = f"<style>{FONT} body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }} .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }} .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }} .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }} .rainbow-text-sm {{ font-size: 1.75rem; }} #MainMenu, footer {{ visibility: hidden; }} .pfp-sidebar {{ border-radius: 50%; object-fit: cover; width: 40px; height: 40px; }}"
+    css = f"<style>{FONT} body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }} .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }} .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }} .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }} .rainbow-text-sm {{ font-size: 1.75rem; }} #MainMenu, footer {{ visibility: hidden; }} .pfp-sidebar {{ border-radius: 50%; object-fit: cover; width: 35px; height: 35px; vertical-align: middle; margin-left: 10px; }}"
     gradient_animation = "background-size: 200% 200%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: rainbow-flow 12s ease infinite;"
     keyframes = "@keyframes rainbow-flow { 0%{{background-position:0% 50%}} 50%{{background-position:100% 50%} 100%{{background-position:0% 50%} }"
     if dark: css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, #ff0080, #ff4500, #ff8c00, #ffff00); {gradient_animation} }} {keyframes}"
@@ -293,9 +292,11 @@ def render_historical_tab(coins_df, selected_symbols, fiat, timeframe, chart_typ
 
 def render_community_tab(current_user, coins_df, fiat):
     st.markdown('<h2 class="rainbow-text-sm">Community Hub</h2>', unsafe_allow_html=True)
+    auto_refresh_chat = st.toggle("Auto-refresh chat", value=True, help="Automatically fetch new messages every 15 seconds.")
+    
     tab1, tab2 = st.tabs(["💬 Chat Room", "👥 Users"])
 
-    with tab1: # Chat Room
+    with tab1:
         chat_ref = db.collection('chat').order_by('timestamp', direction=firestore.Query.DESCENDING).limit(50)
         chat_docs = list(chat_ref.stream())
         for msg_doc in reversed(chat_docs):
@@ -304,13 +305,13 @@ def render_community_tab(current_user, coins_df, fiat):
             pfp = user_data.get('pfp_url', 'https://placehold.co/50x50/222/fff?text=??')
             with st.chat_message(name=" ", avatar=pfp):
                 st.markdown(f"**{msg.get('username','?')}**")
+                st.caption(f"_{msg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}_")
                 st.markdown(msg['message'])
-                st.caption(f"_{msg['timestamp'].strftime('%H:%M:%S')}_")
         if prompt := st.chat_input("Say something..."):
             db.collection('chat').add({'username': current_user, 'message': prompt, 'timestamp': datetime.now()})
             st.rerun()
 
-    with tab2: # Users and Profiles
+    with tab2:
         st.subheader("Registered Users")
         users_docs = db.collection('users').stream()
         all_usernames = [doc.id for doc in users_docs]
@@ -325,7 +326,6 @@ def render_community_tab(current_user, coins_df, fiat):
         if st.session_state.get('compare_user'):
             compare_with = st.session_state.compare_user
             st.markdown(f'<h3 class="rainbow-text-sm">Comparison: {current_user} vs. {compare_with}</h3>', unsafe_allow_html=True)
-            
             my_portfolio_df = render_portfolio_component(current_user, coins_df, fiat, is_comparison=True)
             their_portfolio_df = render_portfolio_component(compare_with, coins_df, fiat, is_comparison=True)
 
@@ -336,6 +336,8 @@ def render_community_tab(current_user, coins_df, fiat):
                     st.dataframe(merged[['Symbol', f'Value ({fiat})_{current_user}', f'Value ({fiat})_{compare_with}']].set_index('Symbol'))
                 else:
                     st.info("You and this user do not hold any of the same assets to compare.")
+    
+    return auto_refresh_chat
 
 
 def render_portfolio_component(username, coins_df, fiat, is_comparison=False):
@@ -369,47 +371,45 @@ def main():
     if not st.session_state.dark_theme:
         st.markdown('<p style="text-align: center; font-style: italic;">(why would you even use light mode?!)</p>', unsafe_allow_html=True)
 
-    st.sidebar.subheader("User Account")
-    if 'username' in st.session_state:
-        col1, col2 = st.sidebar.columns([3, 1])
-        with col1:
-            st.success(f"Logged in as **{st.session_state.username}**")
-        with col2:
-            user_data = load_user_data(st.session_state.username)
-            pfp = user_data.get('pfp_url', 'https://placehold.co/50x50/222/fff?text=??')
-            # FIX: Corrected typo `aptions` to `caption` and simplified call
-            st.image(pfp, width=40)
+    with st.sidebar.expander("User Account", expanded=True):
+        if 'username' in st.session_state:
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.success(f"Logged in as **{st.session_state.username}**")
+            with col2:
+                user_data = load_user_data(st.session_state.username)
+                pfp = user_data.get('pfp_url', '')
+                if pfp: st.image(pfp, width=35)
             
-        if st.sidebar.button("Logout"):
-            for key in list(st.session_state.keys()):
-                if key != 'dark_theme': del st.session_state[key]
-            st.rerun()
-    else:
-        auth_tab1, auth_tab2 = st.sidebar.tabs(["Login", "Create Account"])
-        with auth_tab1:
-            with st.form("login_form"):
-                username, password = st.text_input("Username"), st.text_input("Password", type="password")
-                if st.form_submit_button("Login"):
-                    if check_password(username, password): 
-                        st.session_state.username = username
-                        st.rerun()
-                    else: st.error("Invalid username or password.")
-        with auth_tab2:
-            with st.form("signup_form"):
-                new_user, new_pass = st.text_input("New Username"), st.text_input("New Password", type="password")
-                if st.form_submit_button("Sign Up"):
-                    user_doc = db.collection('users').document(new_user).get()
-                    if not new_user or not new_pass: st.error("Fields cannot be empty.")
-                    elif user_doc.exists or new_user in st.secrets.get("passwords", {}): st.error("Username already exists.")
-                    else:
-                        save_user_data(new_user, {'hashed_password': hash_password(new_pass)})
-                        st.success("Account created! Please log in.")
-        st.info("👋 Welcome! Please log in or create an account to begin.")
-        st.stop()
+            if st.button("Logout"):
+                for key in list(st.session_state.keys()):
+                    if key != 'dark_theme': del st.session_state[key]
+                st.rerun()
+        else:
+            auth_tab1, auth_tab2 = st.tabs(["Login", "Create Account"])
+            with auth_tab1:
+                with st.form("login_form"):
+                    username, password = st.text_input("Username"), st.text_input("Password", type="password")
+                    if st.form_submit_button("Login"):
+                        if check_password(username, password): 
+                            st.session_state.username = username
+                            st.rerun()
+                        else: st.error("Invalid username or password.")
+            with auth_tab2:
+                with st.form("signup_form"):
+                    new_user, new_pass = st.text_input("New Username"), st.text_input("New Password", type="password")
+                    if st.form_submit_button("Sign Up"):
+                        user_doc = db.collection('users').document(new_user).get()
+                        if not new_user or not new_pass: st.error("Fields cannot be empty.")
+                        elif user_doc.exists or new_user in st.secrets.get("passwords", {}): st.error("Username already exists.")
+                        else:
+                            save_user_data(new_user, {'hashed_password': hash_password(new_pass)})
+                            st.success("Account created! Please log in.")
+            st.info("👋 Welcome! Please log in or create an account to begin.")
+            st.stop()
     
     username = st.session_state.username
-    with st.sidebar:
-        st.markdown("---"); st.subheader("Profile Settings")
+    with st.sidebar.expander("Profile Settings"):
         user_data = load_user_data(username)
         pfp_url = st.text_input("Profile Picture URL", value=user_data.get('pfp_url', ''))
         if st.button("Update Profile"):
@@ -417,8 +417,7 @@ def main():
             st.success("Profile updated!")
         if pfp_url: st.image(pfp_url, width=100)
 
-        st.markdown("---"); st.subheader("Market Controls")
-        auto_refresh_chat = st.toggle("Auto-refresh chat", value=True)
+    with st.sidebar.expander("Market Controls", expanded=True):
         fiat = st.selectbox("Fiat Currency", SUPPORTED_CURRENCIES, index=SUPPORTED_CURRENCIES.index('USD'))
         with st.spinner("Loading coin list..."): coins_df, status = get_coins_list(fiat)
         if status != "coingecko_ok": st.warning("Using fallback API.")
@@ -450,7 +449,8 @@ def main():
     with tab1: render_overview_tab(coins_df, fiat)
     with tab2: render_historical_tab(coins_df, selected_coins, fiat, timeframe, chart_h)
     with tab3: render_portfolio_tab(coins_df, fiat, username)
-    with tab4: render_community_tab(username, coins_df, fiat)
+    auto_refresh_chat = False
+    with tab4: auto_refresh_chat = render_community_tab(username, coins_df, fiat)
 
     if auto_refresh_chat:
         time.sleep(15)
