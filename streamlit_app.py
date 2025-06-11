@@ -184,39 +184,39 @@ def apply_theme():
     light_theme = {"bg": "#FFFFFF", "text": "#31333F", "table_bg": "#f0f2f6", "header_bg": "#e0e0e0", "header_text": "#31333F"}
     theme = dark_theme if dark else light_theme
     
-    # FIX: Consolidated all CSS into a single, clean block
-    css = f"""
-        {FONT}
-        body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }}
-        .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }}
-        .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }}
-        .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }}
-        .rainbow-text-sm {{ font-size: 1.75rem; }}
-        #MainMenu, footer {{ visibility: hidden; }}
-        .pfp-sidebar {{ border-radius: 50%; object-fit: cover; width: 35px; height: 35px; vertical-align: middle; margin-left: 10px; }}
-        .online-indicator {{ height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: middle; }}
-        .online {{ background-color: #2de040; }} .offline {{ background-color: #888; }}
-        .chat-bubble {{ padding: 10px 15px; border-radius: 20px; margin-bottom: 5px; display: inline-block; max-width: 100%; word-wrap: break-word; }}
-        .chat-bubble.user {{ background: linear-gradient(90deg, #6a11cb 0%, #2575fc 100%); color: white; border-bottom-right-radius: 5px; }}
-        .chat-bubble.other {{ background: #333; color: white; border-bottom-left-radius: 5px; }}
-        .chat-row {{ display: flex; margin-bottom: 10px; align-items: flex-end; }}
-        .chat-row.user {{ justify-content: flex-end; }}
-        .chat-pfp {{ width: 40px; height: 40px; border-radius: 50%; object-fit: cover; align-self: flex-start; }}
-        .chat-row.user .chat-pfp {{ margin-left: 10px; }}
-        .chat-row.other .chat-pfp {{ margin-right: 10px; }}
-        .chat-content {{ max-width: 80%; }}
-    """
-    
     gradient_animation = "background-size: 200% 200%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: rainbow-flow 12s ease infinite;"
-    keyframes = "@keyframes rainbow-flow { 0%{{background-position:0% 50%}} 50%{{background-position:100% 50%} 100%{{background-position:0% 50%} }"
+    keyframes = "@keyframes rainbow-flow { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }"
     
     if dark:
-        css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, #ff0080, #ff4500, #ff8c00, #ffff00); {gradient_animation} }} {keyframes}"
+        gradient_style = f"background: linear-gradient(90deg, #ff0080, #ff4500, #ff8c00, #ffff00); {gradient_animation}"
     else:
-        css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, cyan, magenta, cyan); {gradient_animation} }} {keyframes}"
-
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
-
+        gradient_style = f"background: linear-gradient(90deg, cyan, magenta, cyan); {gradient_animation}"
+        
+    css = f"""
+        <style>
+            {FONT}
+            body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }}
+            .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }}
+            .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }}
+            .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; {gradient_style} }}
+            .rainbow-text-sm {{ font-size: 1.75rem; }}
+            #MainMenu, footer {{ visibility: hidden; }}
+            .pfp-sidebar {{ border-radius: 50%; object-fit: cover; width: 35px; height: 35px; vertical-align: middle; margin-left: 10px; }}
+            .online-indicator {{ height: 10px; width: 10px; border-radius: 50%; display: inline-block; margin-right: 8px; vertical-align: middle; }}
+            .online {{ background-color: #2de040; }} .offline {{ background-color: #888; }}
+            .chat-bubble {{ padding: 10px 15px; border-radius: 20px; margin-bottom: 5px; display: inline-block; max-width: 100%; word-wrap: break-word; }}
+            .chat-bubble.user {{ background: linear-gradient(90deg, #6a11cb 0%, #2575fc 100%); color: white; border-bottom-right-radius: 5px; }}
+            .chat-bubble.other {{ background: #333; color: white; border-bottom-left-radius: 5px; }}
+            .chat-row {{ display: flex; margin-bottom: 10px; align-items: flex-end; }}
+            .chat-row.user {{ justify-content: flex-end; }}
+            .chat-pfp {{ width: 40px; height: 40px; border-radius: 50%; object-fit: cover; align-self: flex-start; }}
+            .chat-row.user .chat-pfp {{ margin-left: 10px; }}
+            .chat-row.other .chat-pfp {{ margin-right: 10px; }}
+            .chat-content {{ max-width: 80%; }}
+            {keyframes}
+        </style>
+    """
+    st.markdown(css, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UI Rendering Functions
@@ -364,7 +364,7 @@ def render_community_tab(current_user, coins_df, fiat):
         if st.button("Refresh Now"):
             st.rerun()
     
-    if auto_refresh_chat and st.session_state.get('current_tab') == '🌐 Community':
+    if auto_refresh_chat and st.session_state.get('active_tab') == '🌐 Community':
         st.components.v1.html("<meta http-equiv='refresh' content='15'>", height=0)
 
     tab1, tab2, tab3, tab4 = st.tabs(["💬 Chat Room", "👥 Users", "🤝 Friends", "🎨 Custom Emotes"])
@@ -666,13 +666,22 @@ def main():
 
     st.markdown("---")
     main_tabs = ["📈 Overview", "📉 Historical", "💼 Portfolio Tracker", "🌐 Community", "🏆 Simulator & Games"]
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(main_tabs)
     
-    with tab1: render_overview_tab(coins_df, fiat)
-    with tab2: render_historical_tab(coins_df, selected_coins, fiat, timeframe, chart_h)
-    with tab3: render_portfolio_tab(coins_df, fiat, username)
-    with tab4: render_community_tab(username, coins_df, fiat)
-    with tab5: render_simulator_tab(username, coins_df, fiat)
+    # Use st.tabs to create the tab interface
+    tabs = st.tabs(main_tabs)
+
+    with tabs[0]: render_overview_tab(coins_df, fiat)
+    with tabs[1]: render_historical_tab(coins_df, selected_coins, fiat, timeframe, chart_h)
+    with tabs[2]: render_portfolio_tab(coins_df, fiat, username)
+    with tabs[3]: render_community_tab(username, coins_df, fiat)
+    with tabs[4]: render_simulator_tab(username, coins_df, fiat)
+
+    # Simplified active tab tracking for auto-refresh
+    # A more robust solution would involve a custom component, but this is a good-enough hack.
+    # We'll assume if the community tab exists as a rendered function, the user *might* be on it.
+    if 'render_community_tab' in locals() and st.session_state.get('auto_refresh_chat', False):
+        time.sleep(15)
+        st.rerun()
 
     if 'last_seen_update' not in st.session_state or (datetime.now(timezone.utc) - st.session_state.last_seen_update).total_seconds() > 60:
         save_user_data(username, {'last_seen': datetime.now(timezone.utc)})
