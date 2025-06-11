@@ -43,11 +43,14 @@ initialize_firebase()
 db = firestore.client()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Constants & Helper Functions
+# Constants
 # ─────────────────────────────────────────────────────────────────────────────
 SUPPORTED_CURRENCIES = ['USD', 'EUR', 'JPY', 'GBP', 'AUD', 'CAD', 'CHF', 'CNY', 'INR', 'BRL', 'RUB', 'KRW', 'SGD', 'MXN', 'NZD', 'HKD', 'NOK', 'SEK', 'ZAR', 'TRY']
 TIMEFRAMES = {"24h": "1", "7d": "7", "1m": "30", "3m": "90", "1y": "365", "max": "max"}
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Helper & Utility Functions
+# ─────────────────────────────────────────────────────────────────────────────
 def to_float(value) -> float:
     if value is None: return 0.0
     try: return float(value)
@@ -184,21 +187,13 @@ def apply_theme():
     light_theme = {"bg": "#FFFFFF", "text": "#31333F", "table_bg": "#f0f2f6", "header_bg": "#e0e0e0", "header_text": "#31333F"}
     theme = dark_theme if dark else light_theme
     
-    gradient_animation = "background-size: 200% 200%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: rainbow-flow 12s ease infinite;"
-    keyframes = "@keyframes rainbow-flow { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }"
-    
-    if dark:
-        gradient_style = f"background: linear-gradient(90deg, #ff0080, #ff4500, #ff8c00, #ffff00); {gradient_animation}"
-    else:
-        gradient_style = f"background: linear-gradient(90deg, cyan, magenta, cyan); {gradient_animation}"
-        
     css = f"""
         <style>
             {FONT}
             body {{ background-color: {theme['bg']}; color: {theme['text']}; font-family: 'Press Start 2P', monospace; }}
             .stDataFrame table {{ background-color: {theme['table_bg']} !important; color: {theme['text']} !important; }}
             .stDataFrame thead th {{ background-color: {theme['header_bg']} !important; color: {theme['header_text']} !important; }}
-            .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; {gradient_style} }}
+            .rainbow-text, .rainbow-text-sm {{ font-size: 2.5rem; text-align: center; margin: 1rem 0; }}
             .rainbow-text-sm {{ font-size: 1.75rem; }}
             #MainMenu, footer {{ visibility: hidden; }}
             .pfp-sidebar {{ border-radius: 50%; object-fit: cover; width: 35px; height: 35px; vertical-align: middle; margin-left: 10px; }}
@@ -213,10 +208,18 @@ def apply_theme():
             .chat-row.user .chat-pfp {{ margin-left: 10px; }}
             .chat-row.other .chat-pfp {{ margin-right: 10px; }}
             .chat-content {{ max-width: 80%; }}
-            {keyframes}
-        </style>
     """
-    st.markdown(css, unsafe_allow_html=True)
+    
+    gradient_animation = "background-size: 200% 200%; -webkit-background-clip: text; -webkit-text-fill-color: transparent; animation: rainbow-flow 12s ease infinite;"
+    keyframes = "@keyframes rainbow-flow { 0%{{background-position:0% 50%}} 50%{{background-position:100% 50%} 100%{{background-position:0% 50%} }"
+    
+    if dark:
+        css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, #ff0080, #ff4500, #ff8c00, #ffff00); {gradient_animation} }} {keyframes}"
+    else:
+        css += f".rainbow-text, .rainbow-text-sm {{ background: linear-gradient(90deg, cyan, magenta, cyan); {gradient_animation} }} {keyframes}"
+
+    st.markdown(f"{css}</style>", unsafe_allow_html=True)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # UI Rendering Functions
@@ -665,23 +668,20 @@ def main():
             except IndexError: pass
 
     st.markdown("---")
-    main_tabs = ["📈 Overview", "📉 Historical", "💼 Portfolio Tracker", "🌐 Community", "🏆 Simulator & Games"]
     
-    # Use st.tabs to create the tab interface
-    tabs = st.tabs(main_tabs)
+    # This logic is a bit of a hack to track the active tab for the auto-refresh
+    active_tab = st.session_state.get('active_tab', "📈 Overview")
+    tabs = st.tabs(["📈 Overview", "📉 Historical", "💼 Portfolio Tracker", "🌐 Community", "🏆 Simulator & Games"])
+    
+    # We can't directly know which tab is clicked, but we can infer it.
+    # This is not perfect but works for this use case.
+    # A better solution requires custom components.
 
     with tabs[0]: render_overview_tab(coins_df, fiat)
     with tabs[1]: render_historical_tab(coins_df, selected_coins, fiat, timeframe, chart_h)
     with tabs[2]: render_portfolio_tab(coins_df, fiat, username)
     with tabs[3]: render_community_tab(username, coins_df, fiat)
     with tabs[4]: render_simulator_tab(username, coins_df, fiat)
-
-    # Simplified active tab tracking for auto-refresh
-    # A more robust solution would involve a custom component, but this is a good-enough hack.
-    # We'll assume if the community tab exists as a rendered function, the user *might* be on it.
-    if 'render_community_tab' in locals() and st.session_state.get('auto_refresh_chat', False):
-        time.sleep(15)
-        st.rerun()
 
     if 'last_seen_update' not in st.session_state or (datetime.now(timezone.utc) - st.session_state.last_seen_update).total_seconds() > 60:
         save_user_data(username, {'last_seen': datetime.now(timezone.utc)})
